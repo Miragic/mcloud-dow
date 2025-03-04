@@ -10,6 +10,8 @@ def post_json(base_url, route, token, data):
     url = base_url + route
 
     try:
+        print(f"Request URL: {url}")
+        print(f"Request Params: {data}")
         response = requests.post(url, json=data, headers=headers, timeout=60)
         response.raise_for_status()
         result = response.json()

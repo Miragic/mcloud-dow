@@ -5,7 +5,6 @@ import mimetypes
 import threading
 import json
 
-
 import requests
 from urllib.parse import urlparse, unquote
 
@@ -70,6 +69,23 @@ class DifyBot(Bot):
                 dify_error_reply = conf().get("dify_error_reply", None)
                 error_msg = dify_error_reply if dify_error_reply else err
                 reply = Reply(ReplyType.TEXT, error_msg)
+            return reply
+        elif context.type == ContextType.VIDEO:
+            video_url = context.content  # 从 context.content 中获取视频 URL
+            try:
+                # 使用 requests 库下载视频
+                response = requests.get(video_url, stream=True)
+                response.raise_for_status()  # 检查请求是否成功
+
+                # 将视频保存到本地文件
+                with open("video.mp4", "wb") as f:
+                    for chunk in response.iter_content(chunk_size=8192):
+                        f.write(chunk)
+
+                reply = Reply(ReplyType.INFO, "视频已保存到本地文件 video.mp4")
+            except Exception as e:
+                logger.error("下载视频失败: {}".format(e))
+                reply = Reply(ReplyType.ERROR, "下载视频失败")
             return reply
         else:
             reply = Reply(ReplyType.ERROR, "Bot不支持处理{}类型的消息".format(context.type))

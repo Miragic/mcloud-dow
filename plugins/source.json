@@ -43,6 +43,14 @@
     "HighSpeedTicket": {
       "url": "https://github.com/He0607/HighSpeedTicket.git",
       "desc": "高铁（火车）票查询插件"
+    },
+    "timetask": {
+      "url": "https://github.com/haikerapples/timetask.git",
+      "desc": "定时任务插件"
+    },
+    "sakuraTools": {
+      "url": "https://github.com/Sakura7301/sakuraTools.git",
+      "desc": "sakuraTools 是一个基于 chatgpt-on-wechat 的插件，集成了一系列有趣的小功能，包括获取舔狗日记、笑话、摸鱼日历、二次元图片、小姐姐视频、星座运势、虫部落热门帖子、疯狂星期四文案、以及赛博算卦等功能。"
     }
   }
 }

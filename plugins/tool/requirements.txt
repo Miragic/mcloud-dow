@@ -1,0 +1,45 @@
+# persist config
+pyyaml~=6.0
+
+# data validation
+pydantic~=2.5.3
+
+# for rich text
+rich
+
+# read .env file
+python-dotenv
+
+# for openai
+openai~=0.27.8
+tenacity~=8.2.2  # retrying library
+tiktoken~=0.4.0
+
+# for arxiv tool
+arxiv
+
+pyopenssl
+
+# for stt_tts tool
+azure-cognitiveservices-speech
+langid
+
+# for visual tool
+dashscope
+
+# for web_request tool
+requests
+lxml
+beautifulsoup4~=4.12.0
+aiohttp~=3.8.6
+
+# for wechat tool
+qrcode
+pyqrcode
+pillow
+
+# for wikipedia tool
+wikipedia
+
+# for wolfram-alpha tool
+wolframalpha
