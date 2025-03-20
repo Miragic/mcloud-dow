@@ -1,0 +1,12 @@
+{
+    "db_path": "pktracker.db",
+    "scheduler_interval": 60,
+    "default_rewards": {
+        "first_checkin": 3,
+        "consecutive": 3,
+        "weekly": 3,
+        "monthly": 5
+    },
+    "reminder_template": "⏰ 打卡提醒\n任务: [{{task_name}}]\n快来打卡啦~ 发送 PKTracker [{{task_name}}] 你的打卡内容 即可完成打卡",
+    "ranking_template": "📊 [{{task_name}}] 排行榜 TOP {{limit}}\n==================="
+}
