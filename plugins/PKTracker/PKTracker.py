@@ -118,28 +118,45 @@ class PKTracker(Plugin):
             # 处理查询命令
             elif command == "积分排名":
                 reply_text = self.get_ranking(group_id, parts[2] if len(parts) > 2 else None)
-
+            
+            # 处理任务列表命令
+            elif command == "任务列表":
+                reply_text = self.get_task_list(group_id)
+            
+            # 处理查看管理员命令
+            elif command == "查看管理员":
+                reply_text = self.get_admin_list(group_id)
+                
             # 处理帮助命令
             elif command == "help":
                 reply_text = self.get_help_text()
 
             # 处理添加管理员命令
             elif command == "添加管理员":
-                if len(parts) != 3:
-                    reply_text = "格式错误,请使用: PKTracker 添加管理员 用户名"
+                if len(parts) != 3 or not (parts[2].startswith('[') and parts[2].endswith(']')):
+                    reply_text = "格式错误,请使用: PKTracker 添加管理员 [用户名]"
                 else:
-                    user_name = parts[2]
+                    user_name = parts[2][1:-1]  # 去掉方括号
                     u_id = self._get_user_nickname_by_nickname(user_name)
                     reply_text = self.add_admin(group_id, u_id, user_id, user_name)
-            
+
+            # 处理取消管理员命令
+            elif command == "取消管理员":
+                if len(parts) != 3 or not (parts[2].startswith('[') and parts[2].endswith(']')):
+                    reply_text = "格式错误,请使用: PKTracker 取消管理员 [用户名]"
+                else:
+                    user_name = parts[2][1:-1]  # 去掉方括号
+                    u_id = self._get_user_nickname_by_nickname(user_name)
+                    reply_text = self.remove_admin(group_id, u_id, user_id, user_name)
+
             # 处理创建打卡任务命令
             elif command == "创建任务":
                 if not self.is_admin(group_id, user_id):
                     reply_text = "只有管理员或者超级管理员可以创建任务"
-                elif len(parts) < 3:
-                    reply_text = "格式错误,请使用: PKTracker 创建任务 任务名称"
+                elif len(parts) < 3 or not (parts[2].startswith('[') and parts[2].endswith(']')):
+                    reply_text = "格式错误,请使用: PKTracker 创建任务 [任务名称]"
                 else:
-                    task_name = parts[2]
+                    task_name = parts[2][1:-1]  # 去掉方括号
                     reply_text = self.create_task(group_id, task_name)
         
             else:
@@ -247,7 +264,9 @@ class PKTracker(Plugin):
       PKTracker [任务名称] 打卡内容
       例如: PKTracker [早起] 今天6点起床啦
     
-    🔹 查看排名:
+    🔹 查看任务:
+      - 查看任务列表:
+        PKTracker 任务列表
       - 查看指定任务排名:
         PKTracker 积分排名 [任务名称]
       - 查看所有任务排名:
@@ -255,22 +274,29 @@ class PKTracker(Plugin):
     
     🔹 管理员指令:
       1. 创建打卡任务:
-         PKTracker 创建任务 任务名称
+         PKTracker 创建任务 [任务名称]
+         例如: PKTracker 创建任务 [每日一练]
       2. 设置打卡频率:
          PKTracker 设置频率 [任务名称] [日/周/月]
       3. 设置提醒时间:
          PKTracker 设置提醒 [任务名称] [时间]
-         时间格式: HH:MM (例如: 08:00)"""
+         时间格式: HH:MM (例如: 08:00)
+      4. 查看管理员:
+         PKTracker 查看管理员
     
         # 如果是超级管理员,添加超管命令说明
         if kwargs.get("user_id") and self.is_super_admin(kwargs["user_id"]):
-            base_help += """
-    
+            base_help += ""
+
     🔸 超级管理员指令:
       - 添加管理员:
-        PKTracker 添加管理员 [用户名]"""
+        PKTracker 添加管理员 [用户名]
+        例如: PKTracker 添加管理员 [张三]
+      - 取消管理员:
+        PKTracker 取消管理员 [用户名]
+        例如: PKTracker 取消管理员 [张三]
     
-        base_help += """
+        base_help += ""
     
     🔸 积分规则:
       - 基础打卡: 1分
@@ -459,13 +485,6 @@ class PKTracker(Plugin):
             conn.close()
 
     def get_ranking(self, group_id: str, task_name: str = None) -> str:
-        """获取群内打卡排行榜
-        Args:
-            group_id: 群组ID
-            task_name: 任务名称,为None时显示所有任务排名
-        Returns:
-            str: 排行榜信息
-        """
         try:
             conn = sqlite3.connect(self.db_path)
             c = conn.cursor()
@@ -500,12 +519,11 @@ class PKTracker(Plugin):
                     GROUP BY cl.user_id
                 )
                 SELECT 
-                    u.name,
+                    up.user_id,
                     up.checkin_count,
                     up.checkin_count + up.bonus_points as total_points,
                     up.last_checkin
                 FROM user_points up
-                JOIN t_user u ON up.user_id = u.user_id
                 ORDER BY total_points DESC, last_checkin ASC
                 LIMIT 10
             """, (group_id,))
@@ -515,14 +533,19 @@ class PKTracker(Plugin):
             if not rankings:
                 return f"📊 {title} 暂无打卡记录"
 
+            # 获取所有用户的昵称
+            user_ids = [row[0] for row in rankings]
+            nickname_map = self._get_nickname_by_user_ids(user_ids)
+
             # 生成排行榜消息
             message = f"📊 {title} 排行榜 TOP 10\n"
             message += "===================\n"
 
-            for idx, (name, checkins, points, last_checkin) in enumerate(rankings, 1):
+            for idx, (user_id, checkins, points, last_checkin) in enumerate(rankings, 1):
                 medal = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else "👑"
                 last_time = datetime.strptime(last_checkin, '%Y-%m-%d %H:%M:%S').strftime('%m-%d %H:%M')
-                message += f"{medal} {idx}. {name}\n"
+                nickname = nickname_map.get(user_id, user_id)
+                message += f"{medal} {idx}. {nickname}\n"
                 message += f"   打卡: {checkins}次 | 总积分: {points} | 最后打卡: {last_time}\n"
 
             return message
@@ -605,11 +628,53 @@ class PKTracker(Plugin):
                      (group_id, user_id))
             
             conn.commit()
-            return f"✅ 已将用户 {user_name} 设置为管理员"
+            admin_list = self.get_admin_list(group_id)
+            return f"✅ 已将用户 {user_name} 设置为管理员\n\n{admin_list}"
             
         except Exception as e:
             logger.exception(f"[PKTracker] 添加管理员异常: {str(e)}")
             return "❌ 添加管理员失败,请稍后重试"
+        finally:
+            conn.close()
+    
+    def remove_admin(self, group_id: str, user_id: str, operator_id: str, user_name: str) -> str:
+        """取消管理员
+        Args:
+            group_id: 群组ID
+            user_id: 被取消的用户ID
+            operator_id: 操作者ID
+            user_name: 用户名称
+        Returns:
+            str: 操作结果提示
+        """
+        if not self.is_super_admin(operator_id):
+            return "❌ 只有超级管理员才能取消管理员"
+            
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            
+            # 检查是否是超级管理员
+            if user_id in self.config.get("super_admins", []):
+                return "❌ 无法取消超级管理员的权限"
+            
+            # 检查是否是管理员
+            c.execute("SELECT 1 FROM t_admin WHERE group_id=? AND user_id=?", 
+                     (group_id, user_id))
+            if not c.fetchone():
+                return f"❌ 用户 {user_name} 不是管理员"
+                
+            # 取消管理员
+            c.execute("DELETE FROM t_admin WHERE group_id=? AND user_id=?",
+                     (group_id, user_id))
+            
+            conn.commit()
+            admin_list = self.get_admin_list(group_id)
+            return f"✅ 已取消用户 {user_name} 的管理员权限\n\n{admin_list}"
+            
+        except Exception as e:
+            logger.exception(f"[PKTracker] 取消管理员异常: {str(e)}")
+            return "❌ 取消管理员失败,请稍后重试"
         finally:
             conn.close()
 
@@ -722,3 +787,122 @@ class PKTracker(Plugin):
         except Exception as e:
             logger.error(f"[PKTracker] 批量获取用户昵称失败: {e}")
             return {uid: uid for uid in user_ids}
+
+    def get_task_list(self, group_id: str) -> str:
+        """获取群内任务列表
+        Args:
+            group_id: 群组ID
+        Returns:
+            str: 任务列表信息
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            
+            # 获取所有任务信息
+            c.execute("""
+                SELECT 
+                    task_name,
+                    frequency,
+                    first_checkin_reward_enabled,
+                    first_checkin_reward,
+                    consecutive_checkin_reward_enabled,
+                    consecutive_checkin_reward,
+                    reminder_time,
+                    enable,
+                    (SELECT COUNT(*) FROM t_checkin_log WHERE task_id = t.task_id) as total_checkins
+                FROM t_task t
+                WHERE group_id = ?
+                ORDER BY enable DESC, task_name ASC
+            """, (group_id,))
+            
+            tasks = c.fetchall()
+            
+            if not tasks:
+                return "📝 当前群组暂无任务"
+                
+            # 生成任务列表消息
+            message = "📝 任务列表\n==================="
+            
+            for task in tasks:
+                (name, freq, first_enabled, first_reward, 
+                 consec_enabled, consec_reward, reminder, enable, total_checkins) = task
+                
+                # 转换频率显示
+                freq_map = {"day": "每日", "week": "每周", "month": "每月"}
+                freq_text = freq_map.get(freq, freq)
+                
+                # 状态emoji
+                status = "✅" if enable else "❌"
+                
+                message += f"\n\n{status} [{name}]"
+                message += f"\n🔸 打卡频率: {freq_text}"
+                message += f"\n🔸 总打卡次数: {total_checkins}次"
+                
+                # 奖励信息
+                rewards = []
+                if first_enabled:
+                    rewards.append(f"首次打卡+{first_reward}分")
+                if consec_enabled:
+                    rewards.append(f"连续打卡+{consec_reward}分")
+                message += f"\n🔸 奖励设置: {', '.join(rewards)}"
+                
+                # 提醒时间
+                if reminder:
+                    message += f"\n🔸 提醒时间: {reminder}"
+                    
+            return message
+            
+        except Exception as e:
+            logger.exception(f"[PKTracker] 获取任务列表异常: {str(e)}")
+            return "❌ 获取任务列表失败,请稍后重试"
+        finally:
+            conn.close()
+
+    def get_admin_list(self, group_id: str) -> str:
+        """获取群内管理员列表
+        Args:
+            group_id: 群组ID
+        Returns:
+            str: 管理员列表信息
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            
+            # 获取所有管理员ID
+            c.execute("""SELECT user_id FROM t_admin WHERE group_id=?""", (group_id,))
+            admin_ids = [row[0] for row in c.fetchall()]
+            
+            # 获取超级管理员ID
+            super_admin_ids = self.config.get("super_admins", [])
+            
+            # 合并所有管理员ID
+            all_admin_ids = list(set(admin_ids + super_admin_ids))
+            
+            if not all_admin_ids:
+                return "👥 当前群组暂无管理员"
+            
+            # 获取管理员昵称
+            nickname_map = self._get_nickname_by_user_ids(all_admin_ids)
+            
+            # 生成管理员列表消息
+            message = "👥 管理员列表\n==================="
+            
+            # 先显示超级管理员
+            for user_id in super_admin_ids:
+                if user_id in nickname_map and nickname_map[user_id]:  # 添加昵称非空检查
+                    message += f"\n\n👑 超级管理员: {nickname_map[user_id]}"
+            
+            # 显示普通管理员
+            for user_id in admin_ids:
+                if user_id not in super_admin_ids and user_id in nickname_map and nickname_map[user_id]:  # 添加昵称非空检查
+                    message += f"\n\n⭐ 管理员: {nickname_map[user_id]}"
+                    
+            return message
+                
+        except Exception as e:
+            logger.exception(f"[PKTracker] 获取管理员列表异常: {str(e)}")
+            return "❌ 获取管理员列表失败,请稍后重试"
+        finally:
+            conn.close()
