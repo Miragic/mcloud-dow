@@ -1,6 +1,7 @@
 {
     "db_path": "pktracker.db",
     "scheduler_interval": 60,
+    "super_admins": ["admin1", "admin2"],
     "default_rewards": {
         "first_checkin": 3,
         "consecutive": 3,

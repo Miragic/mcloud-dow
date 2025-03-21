@@ -5,10 +5,13 @@ import re
 import sqlite3
 from datetime import datetime, timedelta
 
+import requests
+
 import plugins
 from bridge.context import ContextType
 from bridge.reply import Reply, ReplyType
 from common.log import logger
+from lib.gewechat import GewechatClient
 from plugins import *
 from .scheduler import TaskScheduler
 
@@ -38,6 +41,18 @@ class PKTracker(Plugin):
             
             # 注册事件处理器
             self.handlers[Event.ON_HANDLE_CONTEXT] = self.on_handle_context
+
+            # 读取根目录的 config.json 文件
+            self.gewechat_config = self._load_root_config()
+            if self.gewechat_config:
+                self.app_id = self.gewechat_config.get("gewechat_app_id")
+                self.base_url = self.gewechat_config.get("gewechat_base_url")
+                self.token = self.gewechat_config.get("gewechat_token")
+                # 初始化 GewechatClient
+                self.client = GewechatClient(self.base_url, self.token)
+            else:
+                logger.error("[PKTracker] 无法加载根目录的 config.json 文件，GewechatClient 初始化失败")
+                self.client = None
             
             logger.info("[PKTracker] 初始化成功")
         except Exception as e:
@@ -53,8 +68,25 @@ class PKTracker(Plugin):
         content = context.content
         if not content.startswith("PKTracker"):
             return
-            
+        receiver_value = context.kwargs.get("receiver")
+
         try:
+            # 检查是否为群聊消息
+            if not self.is_group_chat(receiver_value):
+                reply = Reply(ReplyType.TEXT, "❌ 该功能仅支持在群聊中使用")
+                e_context["reply"] = reply
+                e_context.action = EventAction.BREAK_PASS
+                return
+
+            #群组id
+            group_id = receiver_value
+            session_id = context.kwargs.get("session_id", "")
+            #用户id
+            user_id = session_id.split('@@')[0]
+
+
+
+
             # 解析命令
             parts = content.split()
             if len(parts) < 2:
@@ -72,21 +104,44 @@ class PKTracker(Plugin):
                     reply_text = "请输入打卡内容"
                 else:
                     content = " ".join(parts[2:])
-                    reply_text = self.handle_checkin(context.from_user_id, context.group_id, task_name, content)
+                    reply_text = self.handle_checkin(user_id, group_id, task_name, content)
                     
             # 处理管理员命令
             elif command == "设置频率":
-                if not self.is_admin(context.group_id, context.from_user_id):
+                if not self.is_admin(group_id, user_id):
                     reply_text = "只有管理员可以设置频率"
                 elif len(parts) != 4:
                     reply_text = "格式错误,请使用: PKTracker 设置频率 [任务名称] [日/周/月]"
                 else:
-                    reply_text = self.set_frequency(context.group_id, parts[2], parts[3])
+                    reply_text = self.set_frequency(group_id, parts[2], parts[3])
                     
             # 处理查询命令
             elif command == "积分排名":
-                reply_text = self.get_ranking(context.group_id, parts[2] if len(parts) > 2 else None)
-                
+                reply_text = self.get_ranking(group_id, parts[2] if len(parts) > 2 else None)
+
+            # 处理帮助命令
+            elif command == "help":
+                reply_text = self.get_help_text()
+
+            # 处理添加管理员命令
+            elif command == "添加管理员":
+                if len(parts) != 3:
+                    reply_text = "格式错误,请使用: PKTracker 添加管理员 用户名"
+                else:
+                    user_name = parts[2]
+                    u_id = self._get_user_nickname_by_nickname(user_name)
+                    reply_text = self.add_admin(group_id, u_id, user_id, user_name)
+            
+            # 处理创建打卡任务命令
+            elif command == "创建任务":
+                if not self.is_admin(group_id, user_id):
+                    reply_text = "只有管理员或者超级管理员可以创建任务"
+                elif len(parts) < 3:
+                    reply_text = "格式错误,请使用: PKTracker 创建任务 任务名称"
+                else:
+                    task_name = parts[2]
+                    reply_text = self.create_task(group_id, task_name)
+        
             else:
                 reply_text = "未知命令,请检查输入"
                 
@@ -186,12 +241,50 @@ class PKTracker(Plugin):
         return total_bonus
 
     def get_help_text(self, **kwargs):
-        return "微信群打卡PK插件\n" \
-               "支持的命令:\n" \
-               "1. PKTracker [任务名称] 任务内容 - 打卡\n" \
-               "2. PKTracker [任务名称] 积分排名 - 查看排名\n" \
-               "3. PKTracker 设置频率 [任务名称] [日/周/月] - 设置任务频率(管理员)\n" \
-               "4. PKTracker 设置提醒 [任务名称] [时间] - 设置提醒时间(管理员)"
+        base_help = """📝 微信群打卡PK插件使用指南
+    
+    🔹 基础打卡指令:
+      PKTracker [任务名称] 打卡内容
+      例如: PKTracker [早起] 今天6点起床啦
+    
+    🔹 查看排名:
+      - 查看指定任务排名:
+        PKTracker 积分排名 [任务名称]
+      - 查看所有任务排名:
+        PKTracker 积分排名
+    
+    🔹 管理员指令:
+      1. 创建打卡任务:
+         PKTracker 创建任务 任务名称
+      2. 设置打卡频率:
+         PKTracker 设置频率 [任务名称] [日/周/月]
+      3. 设置提醒时间:
+         PKTracker 设置提醒 [任务名称] [时间]
+         时间格式: HH:MM (例如: 08:00)"""
+    
+        # 如果是超级管理员,添加超管命令说明
+        if kwargs.get("user_id") and self.is_super_admin(kwargs["user_id"]):
+            base_help += """
+    
+    🔸 超级管理员指令:
+      - 添加管理员:
+        PKTracker 添加管理员 [用户名]"""
+    
+        base_help += """
+    
+    🔸 积分规则:
+      - 基础打卡: 1分
+      - 首次打卡: +3分
+      - 连续打卡: +3分
+      - 周冠军: +3分
+      - 月冠军: +5分
+    
+    💡 Tips: 
+      - 每个任务每天只能打卡一次
+      - 连续打卡3天可获得额外奖励
+      - 打卡内容要认真填写哦~"""
+    
+        return base_help
 
     def _load_config_template(self):
         """加载配置模板"""
@@ -208,7 +301,7 @@ class PKTracker(Plugin):
         """初始化数据库表结构"""
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
-
+    
         # 创建任务表
         c.execute('''CREATE TABLE IF NOT EXISTS t_task
                        (task_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -224,8 +317,10 @@ class PKTracker(Plugin):
                         consecutive_checkin_reward_enabled INTEGER DEFAULT 1,
                         consecutive_checkin_reward INTEGER DEFAULT 3,
                         reminder_time TEXT,
-                        enable INTEGER DEFAULT 1)''')
-
+                        enable INTEGER DEFAULT 1,
+                        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        update_time DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+    
         # 创建打卡记录表
         c.execute('''CREATE TABLE IF NOT EXISTS t_checkin_log
                        (checkin_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -233,19 +328,25 @@ class PKTracker(Plugin):
                         user_id TEXT NOT NULL,
                         checkin_time DATETIME NOT NULL,
                         content TEXT,
+                        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        update_time DATETIME DEFAULT CURRENT_TIMESTAMP,
                         FOREIGN KEY(task_id) REFERENCES t_task(task_id))''')
-
+    
         # 创建用户表
         c.execute('''CREATE TABLE IF NOT EXISTS t_user
                        (user_id TEXT PRIMARY KEY,
-                        name TEXT NOT NULL)''')
-
+                        name TEXT NOT NULL,
+                        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        update_time DATETIME DEFAULT CURRENT_TIMESTAMP)''')
+    
         # 创建管理员表
         c.execute('''CREATE TABLE IF NOT EXISTS t_admin
                        (group_id TEXT NOT NULL,
                         user_id TEXT NOT NULL,
+                        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        update_time DATETIME DEFAULT CURRENT_TIMESTAMP,
                         PRIMARY KEY(group_id, user_id))''')
-
+    
         # 创建积分表
         c.execute('''CREATE TABLE IF NOT EXISTS t_bonus
                        (bonus_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -254,12 +355,54 @@ class PKTracker(Plugin):
                         type TEXT CHECK(type IN ('first_checkin','consecutive','week','month')),
                         amount INTEGER NOT NULL,
                         date_awarded DATE NOT NULL,
+                        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
+                        update_time DATETIME DEFAULT CURRENT_TIMESTAMP,
                         FOREIGN KEY(task_id) REFERENCES t_task(task_id))''')
-
+    
+        # 创建触发器,用于自动更新update_time
+        c.execute('''CREATE TRIGGER IF NOT EXISTS tg_task_update 
+                   AFTER UPDATE ON t_task
+                   BEGIN
+                       UPDATE t_task SET update_time = CURRENT_TIMESTAMP
+                       WHERE task_id = NEW.task_id;
+                   END;''')
+    
+        c.execute('''CREATE TRIGGER IF NOT EXISTS tg_checkin_log_update 
+                   AFTER UPDATE ON t_checkin_log
+                   BEGIN
+                       UPDATE t_checkin_log SET update_time = CURRENT_TIMESTAMP
+                       WHERE checkin_id = NEW.checkin_id;
+                   END;''')
+    
+        c.execute('''CREATE TRIGGER IF NOT EXISTS tg_user_update 
+                   AFTER UPDATE ON t_user
+                   BEGIN
+                       UPDATE t_user SET update_time = CURRENT_TIMESTAMP
+                       WHERE user_id = NEW.user_id;
+                   END;''')
+    
+        c.execute('''CREATE TRIGGER IF NOT EXISTS tg_admin_update 
+                   AFTER UPDATE ON t_admin
+                   BEGIN
+                       UPDATE t_admin SET update_time = CURRENT_TIMESTAMP
+                       WHERE group_id = NEW.group_id AND user_id = NEW.user_id;
+                   END;''')
+    
+        c.execute('''CREATE TRIGGER IF NOT EXISTS tg_bonus_update 
+                   AFTER UPDATE ON t_bonus
+                   BEGIN
+                       UPDATE t_bonus SET update_time = CURRENT_TIMESTAMP
+                       WHERE bonus_id = NEW.bonus_id;
+                   END;''')
+    
         conn.commit()
         conn.close()
 
     def is_admin(self, group_id, user_id):
+        #检查用户是否是超级管理员
+        if user_id in self.config.get("super_admins", []):
+            return True
+
         """检查用户是否为管理员"""
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
@@ -389,3 +532,193 @@ class PKTracker(Plugin):
             return "❌ 获取排行榜失败,请稍后重试"
         finally:
             conn.close()
+
+    def create_task(self, group_id: str, task_name: str) -> str:
+        """创建新的打卡任务
+        Args:
+            group_id: 群组ID
+            task_name: 任务名称
+        Returns:
+            str: 创建结果提示
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            
+            # 检查任务名是否已存在
+            c.execute("""SELECT 1 FROM t_task 
+                        WHERE group_id=? AND task_name=?""", 
+                     (group_id, task_name))
+            if c.fetchone():
+                return f"❌ 任务 [{task_name}] 已存在"
+                
+            # 创建新任务
+            c.execute("""INSERT INTO t_task 
+                        (group_id, task_name, frequency, enable) 
+                        VALUES (?, ?, 'day', 1)""", 
+                     (group_id, task_name))
+            
+            conn.commit()
+            return f"""✅ 任务 [{task_name}] 创建成功!
+    🔸 默认设置:
+      - 打卡频率: 每日
+      - 首次打卡奖励: +3分
+      - 连续打卡奖励: +3分
+    可使用以下命令修改设置:
+      - PKTracker 设置频率 [{task_name}] [日/周/月]
+      - PKTracker 设置提醒 [{task_name}] [时间]"""
+            
+        except Exception as e:
+            logger.exception(f"[PKTracker] 创建任务异常: {str(e)}")
+            return "❌ 创建任务失败,请稍后重试"
+        finally:
+            conn.close()
+
+    def is_super_admin(self, user_id: str) -> bool:
+        """检查用户是否为超级管理员"""
+        return user_id in self.config.get("super_admins", [])
+    
+    def add_admin(self, group_id: str, user_id: str, operator_id: str, user_name: str) -> str:
+        """添加管理员
+        Args:
+            group_id: 群组ID
+            user_id: 被添加的用户ID
+            operator_id: 操作者ID
+        Returns:
+            str: 操作结果提示
+        """
+        if not self.is_super_admin(operator_id):
+            return "❌ 只有超级管理员才能添加管理员"
+            
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            
+            # 检查是否已经是管理员
+            c.execute("SELECT 1 FROM t_admin WHERE group_id=? AND user_id=?", 
+                     (group_id, user_id))
+            if c.fetchone():
+                return f"❌ 用户 {user_name} 已经是管理员了"
+                
+            # 添加管理员
+            c.execute("INSERT INTO t_admin (group_id, user_id) VALUES (?, ?)",
+                     (group_id, user_id))
+            
+            conn.commit()
+            return f"✅ 已将用户 {user_name} 设置为管理员"
+            
+        except Exception as e:
+            logger.exception(f"[PKTracker] 添加管理员异常: {str(e)}")
+            return "❌ 添加管理员失败,请稍后重试"
+        finally:
+            conn.close()
+
+    def is_group_chat(self, chat_id: str) -> bool:
+        """判断是否是群聊消息
+        Args:
+            chat_id: 聊天ID
+        Returns:
+            bool: 是否为群聊
+        """
+        return chat_id.endswith('@chatroom')
+
+    def _load_root_config(self):
+        """加载根目录的 config.json 文件"""
+        try:
+            root_config_path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "config.json")
+            if os.path.exists(root_config_path):
+                with open(root_config_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+            else:
+                logger.error(f"[PKTracker] 根目录的 config.json 文件不存在: {root_config_path}")
+                return None
+        except Exception as e:
+            logger.error(f"[PKTracker] 加载根目录的 config.json 文件失败: {e}")
+            return None
+
+    def _get_user_nickname_by_nickname(self, nickname):
+        """根据昵称或备注名获取用户 ID"""
+        try:
+            # 获取所有联系人列表
+            contacts_response = self.client.fetch_contacts_list(self.app_id)
+            print(f"[PKTracker] fetch_contacts_list 返回数据: {contacts_response}")  # 打印返回数据
+            if contacts_response.get('ret') == 200:
+                # 提取好友的 wxid 列表
+                wxids = contacts_response.get('data', {}).get('friends', [])
+                print(f"[PKTracker] 提取的 wxids: {wxids}")  # 打印提取的 wxids
+
+                # 如果 wxids 为空，直接返回 None
+                if not wxids:
+                    logger.error("[PKTracker] 未找到有效的 wxid")
+                    return None
+
+                # 分批获取详细信息（每次最多 20 个 wxid）
+                for i in range(0, len(wxids), 20):
+                    batch_wxids = wxids[i:i + 20]  # 每次最多 20 个 wxid
+                    # 获取当前批次的详细信息
+                    detail_response = self.client.get_detail_info(self.app_id, batch_wxids)
+                    print(f"[PKTracker] get_detail_info 返回数据: {detail_response}")  # 打印详细信息
+                    if detail_response.get('ret') == 200:
+                        details = detail_response.get('data', [])
+                        # 遍历详细信息，查找匹配的昵称或备注名
+                        for detail in details:
+                            # 检查昵称或备注名是否匹配
+                            if detail.get('nickName') == nickname or detail.get('remark') == nickname:
+                                return detail.get('userName')  # 返回 wxid
+        except Exception as e:
+            logger.error(f"[PKTracker] 获取用户信息失败: {e}")
+            return None
+
+    def _get_user_nickname(self, user_id):
+        """获取用户昵称"""
+        try:
+            response = requests.post(
+                f"{conf().get('gewechat_base_url')}/contacts/getBriefInfo",
+                json={
+                    "appId": conf().get('gewechat_app_id'),
+                    "wxids": [user_id]
+                },
+                headers={
+                    "X-GEWE-TOKEN": conf().get('gewechat_token')
+                }
+            )
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('ret') == 200 and data.get('data'):
+                    return data['data'][0].get('nickName', user_id)
+            return user_id
+        except Exception as e:
+            logger.error(f"[PKTracker] 获取用户昵称失败: {e}")
+            return user_id
+
+    def _get_nickname_by_user_ids(self, user_ids):
+        """批量获取用户昵称"""
+        if not user_ids:
+            return {}
+
+        try:
+            response = requests.post(
+                f"{conf().get('gewechat_base_url')}/contacts/getBriefInfo",
+                json={
+                    "appId": conf().get('gewechat_app_id'),
+                    "wxids": user_ids
+                },
+                headers={
+                    "X-GEWE-TOKEN": conf().get('gewechat_token')
+                }
+            )
+
+            if response.status_code == 200:
+                data = response.json()
+                if data.get('ret') == 200 and data.get('data'):
+                    # 构造 user_id -> nickName 映射
+                    user_map = {item.get("userName", uid): item.get("nickName", uid) for item, uid in
+                                zip(data['data'], user_ids)}
+                    return user_map
+
+            # 如果请求失败或数据不完整，返回默认映射
+            return {uid: uid for uid in user_ids}
+
+        except Exception as e:
+            logger.error(f"[PKTracker] 批量获取用户昵称失败: {e}")
+            return {uid: uid for uid in user_ids}
