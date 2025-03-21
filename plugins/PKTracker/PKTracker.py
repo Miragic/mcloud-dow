@@ -159,6 +159,20 @@ class PKTracker(Plugin):
                     task_name = parts[2][1:-1]  # 去掉方括号
                     reply_text = self.create_task(group_id, task_name)
         
+            elif command == "设置次数":
+                if not self.is_admin(group_id, user_id):
+                    reply_text = "只有管理员可以设置打卡次数"
+                elif len(parts) != 4 or not (parts[2].startswith('[') and parts[2].endswith(']')):
+                    reply_text = "格式错误,请使用: PKTracker 设置次数 [任务名称] [次数]"
+                else:
+                    try:
+                        task_name = parts[2][1:-1]  # 去掉方括号
+                        max_checkins = int(parts[3][1:-1])
+                        reply_text = self.set_max_checkins(group_id, task_name, max_checkins)
+                    except ValueError:
+                        reply_text = "❌ 次数必须是整数且大于0"
+
+            
             else:
                 reply_text = "未知命令,请检查输入"
                 
@@ -179,14 +193,40 @@ class PKTracker(Plugin):
             c = conn.cursor()
 
             # 检查任务是否存在
-            c.execute("SELECT task_id FROM t_task WHERE group_id=? AND task_name=? AND enable=1",
+            c.execute("""SELECT task_id, frequency, max_checkins FROM t_task 
+                        WHERE group_id=? AND task_name=? AND enable=1""",
                       (group_id, task_name))
             task = c.fetchone()
             if not task:
                 return f"任务 [{task_name}] 不存在或未启用"
 
-            task_id = task[0]
+            task_id, frequency, max_checkins = task
             now = datetime.now()
+
+            # 根据频率检查打卡次数
+            if frequency == 'day':
+                date_start = now.strftime('%Y-%m-%d')
+                date_end = (now + timedelta(days=1)).strftime('%Y-%m-%d')
+            elif frequency == 'week':
+                date_start = (now - timedelta(days=now.weekday())).strftime('%Y-%m-%d')
+                date_end = (now - timedelta(days=now.weekday()) + timedelta(days=7)).strftime('%Y-%m-%d')
+            else:  # month
+                date_start = now.strftime('%Y-%m-01')
+                if now.month == 12:
+                    date_end = f"{now.year + 1}-01-01"
+                else:
+                    date_end = f"{now.year}-{now.month + 1:02d}-01"
+
+            # 检查当前周期内的打卡次数
+            c.execute("""SELECT COUNT(*) FROM t_checkin_log 
+                        WHERE task_id=? AND user_id=? 
+                        AND checkin_time >= ? AND checkin_time < ?""",
+                      (task_id, user_id, date_start, date_end))
+            current_checkins = c.fetchone()[0]
+
+            if current_checkins >= max_checkins:
+                period_map = {'day': '今日', 'week': '本周', 'month': '本月'}
+                return f"❌ {period_map[frequency]}已达到最大打卡次数 ({max_checkins}次)"
 
             # 检查用户是否已存在,不存在则添加
             c.execute("SELECT 1 FROM t_user WHERE user_id=?", (user_id,))
@@ -328,12 +368,13 @@ class PKTracker(Plugin):
         conn = sqlite3.connect(self.db_path)
         c = conn.cursor()
     
-        # 创建任务表
+        # 修改任务表,添加 max_checkins 字段
         c.execute('''CREATE TABLE IF NOT EXISTS t_task
                        (task_id INTEGER PRIMARY KEY AUTOINCREMENT,
                         group_id TEXT NOT NULL,
                         task_name TEXT NOT NULL,
                         frequency TEXT CHECK(frequency IN ('day','week','month')),
+                        max_checkins INTEGER DEFAULT 1,
                         first_checkin_reward_enabled INTEGER DEFAULT 1,
                         first_checkin_reward INTEGER DEFAULT 3,
                         week_checkin_reward_enabled INTEGER DEFAULT 1,
@@ -504,29 +545,43 @@ class PKTracker(Plugin):
                 task_filter = ""
                 title = "[全部任务]"
 
-            # 获取排行榜数据
+            # 修改查询以合并相同任务的统计
             c.execute(f"""
-                WITH user_points AS (
+                WITH task_points AS (
                     SELECT 
                         cl.user_id,
-                        COUNT(*) as checkin_count,
+                        t.task_name,
+                        COUNT(*) as task_checkin_count,
+                        COUNT(*) + COALESCE(SUM(b.amount), 0) as task_total_points
+                    FROM t_checkin_log cl
+                    JOIN t_task t ON cl.task_id = t.task_id
+                    LEFT JOIN t_bonus b ON cl.task_id = b.task_id AND cl.user_id = b.user_id
+                    WHERE t.group_id = ? AND t.enable = 1 {task_filter}
+                    GROUP BY cl.user_id, t.task_id, t.task_name
+                ),
+                user_points AS (
+                    SELECT 
+                        cl.user_id,
+                        COUNT(*) as total_checkins,
                         COALESCE(SUM(b.amount), 0) as bonus_points,
-                        MAX(cl.checkin_time) as last_checkin
+                        MAX(cl.checkin_time) as last_checkin,
+                        GROUP_CONCAT(DISTINCT tp.task_name || ':' || tp.task_checkin_count || ':' || tp.task_total_points) as task_details
                     FROM t_checkin_log cl
                     LEFT JOIN t_bonus b ON cl.task_id = b.task_id AND cl.user_id = b.user_id
-                    WHERE cl.task_id IN (SELECT task_id FROM t_task WHERE group_id=? AND enable=1)
-                    {task_filter}
+                    LEFT JOIN task_points tp ON cl.user_id = tp.user_id
+                    WHERE cl.task_id IN (SELECT task_id FROM t_task WHERE group_id=? AND enable=1) {task_filter}
                     GROUP BY cl.user_id
                 )
                 SELECT 
                     up.user_id,
-                    up.checkin_count,
-                    up.checkin_count + up.bonus_points as total_points,
-                    up.last_checkin
+                    up.total_checkins,
+                    up.total_checkins + up.bonus_points as total_points,
+                    up.last_checkin,
+                    up.task_details
                 FROM user_points up
                 ORDER BY total_points DESC, last_checkin ASC
                 LIMIT 10
-            """, (group_id,))
+            """, (group_id, group_id))
 
             rankings = c.fetchall()
 
@@ -541,12 +596,24 @@ class PKTracker(Plugin):
             message = f"📊 {title} 排行榜 TOP 10\n"
             message += "===================\n"
 
-            for idx, (user_id, checkins, points, last_checkin) in enumerate(rankings, 1):
+            # 修改排行榜消息生成部分
+            for idx, (user_id, checkins, points, last_checkin, task_details) in enumerate(rankings, 1):
                 medal = "🥇" if idx == 1 else "🥈" if idx == 2 else "🥉" if idx == 3 else "👑"
-                last_time = datetime.strptime(last_checkin, '%Y-%m-%d %H:%M:%S').strftime('%m-%d %H:%M')
+                last_time = datetime.strptime(last_checkin, '%Y-%m-%d %H:%M:%S').strftime('%Y-%m-%d %H:%M:%S')
                 nickname = nickname_map.get(user_id, user_id)
+                
                 message += f"{medal} {idx}. {nickname}\n"
-                message += f"   打卡: {checkins}次 | 总积分: {points} | 最后打卡: {last_time}\n"
+                message += f"   总打卡: {checkins}次 | 总积分: {points}\n"
+                
+                # 添加各任务打卡和积分详情
+                if task_details:
+                    task_list = []
+                    for task_info in task_details.split(','):
+                        task_name, count, task_points = task_info.split(':')
+                        task_list.append(f"[{task_name}]{count}次/{task_points}分")
+                    message += f"   任务详情: {' '.join(task_list)}\n"
+                
+                message += f"   最后打卡: {last_time}\n"
 
             return message
 
@@ -557,13 +624,6 @@ class PKTracker(Plugin):
             conn.close()
 
     def create_task(self, group_id: str, task_name: str) -> str:
-        """创建新的打卡任务
-        Args:
-            group_id: 群组ID
-            task_name: 任务名称
-        Returns:
-            str: 创建结果提示
-        """
         try:
             conn = sqlite3.connect(self.db_path)
             c = conn.cursor()
@@ -575,20 +635,22 @@ class PKTracker(Plugin):
             if c.fetchone():
                 return f"❌ 任务 [{task_name}] 已存在"
                 
-            # 创建新任务
+            # 创建新任务,设置默认值
             c.execute("""INSERT INTO t_task 
-                        (group_id, task_name, frequency, enable) 
-                        VALUES (?, ?, 'day', 1)""", 
+                        (group_id, task_name, frequency, max_checkins, enable) 
+                        VALUES (?, ?, 'day', 1, 1)""", 
                      (group_id, task_name))
             
             conn.commit()
             return f"""✅ 任务 [{task_name}] 创建成功!
     🔸 默认设置:
       - 打卡频率: 每日
+      - 打卡次数: 1次
       - 首次打卡奖励: +3分
       - 连续打卡奖励: +3分
     可使用以下命令修改设置:
       - PKTracker 设置频率 [{task_name}] [日/周/月]
+      - PKTracker 设置次数 [{task_name}] [次数]
       - PKTracker 设置提醒 [{task_name}] [时间]"""
             
         except Exception as e:
@@ -904,5 +966,43 @@ class PKTracker(Plugin):
         except Exception as e:
             logger.exception(f"[PKTracker] 获取管理员列表异常: {str(e)}")
             return "❌ 获取管理员列表失败,请稍后重试"
+        finally:
+            conn.close()
+
+    def set_max_checkins(self, group_id: str, task_name: str, max_checkins: int) -> str:
+        """设置任务打卡次数限制
+        Args:
+            group_id: 群组ID
+            task_name: 任务名称
+            max_checkins: 最大打卡次数
+        Returns:
+            str: 设置结果提示
+        """
+        if max_checkins < 1:
+            return "❌ 打卡次数必须大于0"
+    
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+    
+            # 检查任务是否存在
+            c.execute("""SELECT task_id FROM t_task 
+                        WHERE group_id=? AND task_name=?""",
+                      (group_id, task_name))
+            if not c.fetchone():
+                return f"❌ 任务 [{task_name}] 不存在"
+    
+            # 更新打卡次数
+            c.execute("""UPDATE t_task 
+                        SET max_checkins=? 
+                        WHERE group_id=? AND task_name=?""",
+                      (max_checkins, group_id, task_name))
+    
+            conn.commit()
+            return f"✅ 成功设置任务 [{task_name}] 的最大打卡次数为: {max_checkins}"
+    
+        except Exception as e:
+            logger.exception(f"[PKTracker] 设置打卡次数异常: {str(e)}")
+            return "❌ 设置失败,请稍后重试"
         finally:
             conn.close()
