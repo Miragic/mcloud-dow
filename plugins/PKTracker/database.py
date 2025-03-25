@@ -18,6 +18,7 @@ class DatabaseManager:
                         task_name TEXT NOT NULL,
                         frequency TEXT CHECK(frequency IN ('day','week','month')),
                         max_checkins INTEGER DEFAULT 1,
+                        base_score INTEGER DEFAULT 1,
                         first_checkin_reward_enabled INTEGER DEFAULT 1,
                         first_checkin_reward INTEGER DEFAULT 3,
                         week_checkin_reward_enabled INTEGER DEFAULT 1,
