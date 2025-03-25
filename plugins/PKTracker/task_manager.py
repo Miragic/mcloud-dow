@@ -52,10 +52,11 @@ class TaskManager:
                        t.consecutive_checkin_reward_enabled, t.consecutive_checkin_reward,
                        t.first_checkin_reward_enabled, t.first_checkin_reward,
                        t.week_checkin_reward_enabled, t.week_checkin_reward,
-                       t.month_checkin_reward_enabled, t.month_checkin_reward
+                       t.month_checkin_reward_enabled, t.month_checkin_reward,
+                       t.enable, t.base_score
                 FROM t_task t
                 LEFT JOIN t_checkin_log cl ON t.task_id = cl.task_id
-                WHERE t.group_id=? AND t.enable=1
+                WHERE t.group_id=?
                 GROUP BY t.task_id
                 ORDER BY t.task_id DESC
             """, (group_id,))
@@ -71,10 +72,13 @@ class TaskManager:
                  continuous_enable, continuous_bonus,
                  first_enable, first_bonus,
                  weekly_enable, weekly_bonus,
-                 monthly_enable, monthly_bonus) in tasks:
+                 monthly_enable, monthly_bonus,
+                 task_enable, base_score) in tasks:
                 freq_text = freq_map.get(frequency, frequency)
-                message += f"\n\n✅ [{task_name}]"
+                message += f"\n\n{'✅' if task_enable else '❌'} [{task_name}]"
+                message += f" ({('已启用' if task_enable else '已禁用')})"
                 message += f"\n🔸 打卡频率: {freq_text}"
+                message += f"\n🔸 基础分数: {base_score}分"
                 message += f"\n🔸 总打卡次数: {total_checkins}次"
                 message += f"\n🔸 最大打卡次数: {max_checkins}次"
                 message += "\n🔸 奖励设置:"
@@ -167,7 +171,6 @@ class TaskManager:
             conn.close()
 
     def get_task_detail(self, group_id: str, task_name: str) -> str:
-        """获取任务详细信息"""
         try:
             conn = sqlite3.connect(self.db_path)
             c = conn.cursor()
@@ -181,20 +184,22 @@ class TaskManager:
                        t.first_checkin_reward_enabled, t.first_checkin_reward,
                        t.consecutive_checkin_reward_enabled, t.consecutive_checkin_reward,
                        t.week_checkin_reward_enabled, t.week_checkin_reward,
-                       t.month_checkin_reward_enabled, t.month_checkin_reward
+                       t.month_checkin_reward_enabled, t.month_checkin_reward,
+                       t.enable, t.base_score
                 FROM t_task t
                 LEFT JOIN t_checkin_log cl ON t.task_id = cl.task_id
-                WHERE t.group_id=? AND t.task_name=? AND t.enable=1
+                WHERE t.group_id=? AND t.task_name=?
                 GROUP BY t.task_id
             """, (group_id, task_name))
             
             task = c.fetchone()
             if not task:
-                return f"❌ 任务 [{task_name}] 不存在或未启用"
+                return f"❌ 任务 [{task_name}] 不存在"
             
             (task_id, frequency, max_checkins, total_users, total_checkins, last_checkin,
              first_enable, first_bonus, continuous_enable, continuous_bonus,
-             weekly_enable, weekly_bonus, monthly_enable, monthly_bonus) = task
+             weekly_enable, weekly_bonus, monthly_enable, monthly_bonus,
+             task_enable) = task
             
             # 获取今日打卡人数
             today = datetime.now().strftime('%Y-%m-%d')
@@ -223,9 +228,10 @@ class TaskManager:
             
             message = f"📊 任务详情 [{task_name}]\n"
             message += "===================\n\n"
+            message += f"🔸 任务状态: {'已启用 ✅' if task_enable else '已禁用 ❌'}\n\n"
             message += f"🔸 基本信息:\n"
             message += f"   - 打卡频率: {freq_text}\n"
-            message += f"   - 单次打卡积分: 1分\n"
+            message += f"   - 基础分数: {base_score}分\n"
             message += f"   - 最大打卡次数: {max_checkins}次/{freq_text}\n"
             message += f"   - 首次打卡: {'开启 (+' + str(first_bonus) + '分)' if first_enable else '关闭'}\n"
             message += f"   - 连续打卡: {'开启 (+' + str(continuous_bonus) + '分)' if continuous_enable else '关闭'}\n"
@@ -416,5 +422,96 @@ class TaskManager:
         except Exception as e:
             logger.exception(f"[PKTracker] 设置月冠军奖励异常: {str(e)}")
             return "❌ 设置失败,请稍后重试"
+        finally:
+            conn.close()
+
+    def set_task_base_score(self, group_id: str, task_name: str, enable: int, score: int = None) -> str:
+        """设置任务基础分数
+        
+        Args:
+            group_id: 群组ID
+            task_name: 任务名称
+            enable: 是否启用 (1: 启用, 0: 禁用)
+            score: 基础分数
+            
+        Returns:
+            str: 设置结果信息
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+
+            # 检查任务是否存在
+            c.execute("""SELECT task_id FROM t_task 
+                        WHERE group_id=? AND task_name=?""",
+                      (group_id, task_name))
+            if not c.fetchone():
+                return f"❌ 任务 [{task_name}] 不存在"
+
+            # 更新任务设置
+            if enable == 1:
+                c.execute("""UPDATE t_task 
+                            SET enable=?, base_score=?
+                            WHERE group_id=? AND task_name=?""",
+                          (enable, score, group_id, task_name))
+                status_text = f"已开启，基础分数 {score} 分"
+            else:
+                c.execute("""UPDATE t_task 
+                            SET enable=0
+                            WHERE group_id=? AND task_name=?""",
+                          (group_id, task_name))
+                status_text = "已关闭"
+
+            conn.commit()
+            result = f"✅ 成功设置任务 [{task_name}]: {status_text}\n\n"
+            result += self.get_task_list(group_id)
+            return result
+
+        except Exception as e:
+            logger.exception(f"[PKTracker] 设置任务基础分数异常: {str(e)}")
+            return "❌ 设置失败,请稍后重试"
+        finally:
+            conn.close()
+
+    def delete_task(self, group_id: str, task_name: str) -> str:
+        """删除任务
+        
+        Args:
+            group_id: 群组ID
+            task_name: 任务名称
+            
+        Returns:
+            str: 删除结果信息
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+
+            # 检查任务是否存在
+            c.execute("""SELECT task_id FROM t_task 
+                        WHERE group_id=? AND task_name=?""",
+                      (group_id, task_name))
+            if not c.fetchone():
+                return f"❌ 任务 [{task_name}] 不存在"
+
+            # 删除任务相关的所有数据
+            c.execute("""DELETE FROM t_checkin_log 
+                        WHERE task_id IN (
+                            SELECT task_id FROM t_task 
+                            WHERE group_id=? AND task_name=?
+                        )""", (group_id, task_name))
+            
+            c.execute("""DELETE FROM t_task 
+                        WHERE group_id=? AND task_name=?""",
+                      (group_id, task_name))
+
+            conn.commit()
+            result = f"✅ 成功删除任务 [{task_name}]\n\n"
+            result += self.get_task_list(group_id)
+            return result
+
+        except Exception as e:
+            logger.exception(f"[PKTracker] 删除任务异常: {str(e)}")
+            return "❌ 删除失败,请稍后重试"
         finally:
             conn.close()

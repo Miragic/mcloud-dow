@@ -411,6 +411,53 @@ class PKTracker(Plugin):
                 return "❌ 开启月冠军时必须设置分数"
                 
             return self.task_manager.set_month_checkin(group_id, task_name, enable, bonus)
+        # 处理设置任务命令
+        elif command == "设置任务":
+            if not self.admin_manager.is_admin(group_id, user_id):
+                return "只有管理员可以设置任务"
+            
+            if len(parts) < 4:
+                return "格式错误,请使用: PKTracker 设置任务 [任务名称] s[开/关] b[分数]"
+            
+            task_name = parts[2][1:-1]
+            enable = None
+            score = None
+            
+            # 解析参数
+            for part in parts[3:]:
+                if part.startswith('s[') and part.endswith(']'):
+                    status = part[2:-1]
+                    if status == "开":
+                        enable = 1
+                    elif status == "关":
+                        enable = 0
+                    else:
+                        return "❌ 状态必须是 开 或 关"
+                elif part.startswith('b[') and part.endswith(']'):
+                    try:
+                        score = int(part[2:-1])
+                        if score < 0:
+                            return "❌ 分数必须大于等于0"
+                    except ValueError:
+                        return "❌ 分数必须是整数"
+            
+            if enable is None:
+                return "❌ 请设置任务状态：s[开] 或 s[关]"
+            
+            if enable == 1 and score is None:
+                return "❌ 开启任务时必须设置基础分数"
+                
+            return self.task_manager.set_task_base_score(group_id, task_name, enable, score)
+        # 处理删除任务命令
+        elif command == "删除任务":
+            if not self.admin_manager.is_admin(group_id, user_id):
+                return "只有管理员可以删除任务"
+            
+            if len(parts) != 3 or not (parts[2].startswith('[') and parts[2].endswith(']')):
+                return "格式错误,请使用: PKTracker 删除任务 [任务名称]"
+            
+            task_name = parts[2][1:-1]
+            return self.task_manager.delete_task(group_id, task_name)
         else:
             return "未知命令,请检查输入"
 
@@ -440,7 +487,13 @@ class PKTracker(Plugin):
       1. 创建打卡任务:
          PKTracker 创建任务 [任务名称]
          例如: PKTracker 创建任务 [每日一练]
-      2. 设置打卡频率:
+      2. 删除打卡任务:
+         PKTracker 删除任务 [任务名称]
+         例如: PKTracker 删除任务 [每日一练]
+      3. 设置任务:
+         PKTracker 设置任务 [任务名称] s[开/关] b[分数]
+         例如: PKTracker 设置任务 [早起] s[开] b[2]
+      3. 设置打卡频率:
          PKTracker 设置频率 [任务名称] [日/周/月]
       3. 设置提醒时间:
          PKTracker 设置提醒 [任务名称] [时间]
