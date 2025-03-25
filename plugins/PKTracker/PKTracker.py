@@ -262,6 +262,80 @@ class PKTracker(Plugin):
                 return self.ranking_manager.get_user_bonus_detail(group_id, user_name=user_name, page=page)
             else:
                 return self.ranking_manager.get_user_bonus_detail(group_id, sender_id=user_id, page=page)
+        # 处理设置连续打卡命令
+        elif command == "设置连续打卡":
+            if not self.admin_manager.is_admin(group_id, user_id):
+                return "只有管理员可以设置连续打卡规则"
+            
+            if len(parts) < 4:
+                return "格式错误,请使用: PKTracker 设置连续打卡 [任务名称] s[开/关] b[分数]"
+            
+            task_name = parts[2][1:-1]
+            enable = None
+            bonus = None
+            
+            # 解析参数
+            for part in parts[3:]:
+                if part.startswith('s[') and part.endswith(']'):
+                    status = part[2:-1]
+                    if status == "开":
+                        enable = 1
+                    elif status == "关":
+                        enable = 0
+                    else:
+                        return "❌ 状态必须是 开 或 关"
+                elif part.startswith('b[') and part.endswith(']'):
+                    try:
+                        bonus = int(part[2:-1])
+                        if bonus < 0:
+                            return "❌ 分数必须大于等于0"
+                    except ValueError:
+                        return "❌ 分数必须是整数"
+            
+            if enable is None:
+                return "❌ 请设置连续打卡状态：s[开] 或 s[关]"
+            
+            if enable == 1 and bonus is None:
+                return "❌ 开启连续打卡时必须设置分数"
+                
+            return self.task_manager.set_continuous_checkin(group_id, task_name, enable, bonus)
+        # 处理设置首次打卡命令
+        elif command == "设置首次打卡":
+            if not self.admin_manager.is_admin(group_id, user_id):
+                return "只有管理员可以设置首次打卡规则"
+            
+            if len(parts) < 4:
+                return "格式错误,请使用: PKTracker 设置首次打卡 [任务名称] s[开/关] b[分数]"
+            
+            task_name = parts[2][1:-1]
+            enable = None
+            bonus = None
+            
+            # 解析参数
+            for part in parts[3:]:
+                if part.startswith('s[') and part.endswith(']'):
+                    status = part[2:-1]
+                    if status == "开":
+                        enable = 1
+                    elif status == "关":
+                        enable = 0
+                    else:
+                        return "❌ 状态必须是 开 或 关"
+                elif part.startswith('b[') and part.endswith(']'):
+                    try:
+                        bonus = int(part[2:-1])
+                        if bonus < 0:
+                            return "❌ 分数必须大于等于0"
+                    except ValueError:
+                        return "❌ 分数必须是整数"
+            
+            if enable is None:
+                return "❌ 请设置首次打卡状态：s[开] 或 s[关]"
+            
+            if enable == 1 and bonus is None:
+                return "❌ 开启首次打卡时必须设置分数"
+                
+            return self.task_manager.set_first_checkin(group_id, task_name, enable, bonus)
         else:
             return "未知命令,请检查输入"
 
@@ -296,7 +370,13 @@ class PKTracker(Plugin):
       3. 设置提醒时间:
          PKTracker 设置提醒 [任务名称] [时间]
          时间格式: HH:MM (例如: 08:00)
-      4. 查看管理员:
+      4. 设置连续打卡:
+         PKTracker 设置连续打卡 [任务名称] s[开/关] b[分数]
+         例如: PKTracker 设置连续打卡 [早起] s[开] b[3]
+      5. 设置首次打卡:
+         PKTracker 设置首次打卡 [任务名称] s[开/关] b[分数]
+         例如: PKTracker 设置首次打卡 [早起] s[开] b[3]
+      6. 查看管理员:
          PKTracker 查看管理员
 
     🔸 超级管理员指令:

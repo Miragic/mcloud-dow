@@ -49,7 +49,8 @@ class TaskManager:
             
             c.execute("""
                 SELECT t.task_name, t.frequency, t.max_checkins,
-                       COUNT(cl.checkin_id) as total_checkins
+                       COUNT(cl.checkin_id) as total_checkins,
+                       t.first_checkin_reward_enabled, t.first_checkin_reward
                 FROM t_task t
                 LEFT JOIN t_checkin_log cl ON t.task_id = cl.task_id
                 WHERE t.group_id=? AND t.enable=1
@@ -64,13 +65,13 @@ class TaskManager:
             message = "📝 任务列表\n==================="
             
             freq_map = {"day": "每日", "week": "每周", "month": "每月"}
-            for task_name, frequency, max_checkins, total_checkins in tasks:
+            for task_name, frequency, max_checkins, total_checkins, first_enable, first_bonus in tasks:
                 freq_text = freq_map.get(frequency, frequency)
                 message += f"\n\n✅ [{task_name}]"
                 message += f"\n🔸 打卡频率: {freq_text}"
                 message += f"\n🔸 总打卡次数: {total_checkins}次"
                 message += f"\n🔸 最大打卡次数: {max_checkins}次"
-                message += "\n🔸 奖励设置: 首次打卡+3分, 连续打卡+3分"
+                message += f"\n🔸 首次打卡: {'开启 (+' + str(first_bonus) + '分)' if first_enable else '关闭'}"
             
             return message
             
@@ -225,5 +226,53 @@ class TaskManager:
         except Exception as e:
             logger.exception(f"[PKTracker] 获取任务详情异常: {str(e)}")
             return "❌ 获取任务详情失败"
+        finally:
+            conn.close()
+
+    def set_first_checkin(self, group_id: str, task_name: str, enable: int, bonus: int = None) -> str:
+        """设置任务首次打卡奖励
+        
+        Args:
+            group_id: 群组ID
+            task_name: 任务名称
+            enable: 是否启用 (1: 启用, 0: 禁用)
+            bonus: 奖励分数
+            
+        Returns:
+            str: 设置结果信息
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+
+            # 检查任务是否存在
+            c.execute("""SELECT task_id FROM t_task 
+                        WHERE group_id=? AND task_name=?""",
+                      (group_id, task_name))
+            if not c.fetchone():
+                return f"❌ 任务 [{task_name}] 不存在"
+
+            # 更新首次打卡设置
+            if enable == 1:
+                c.execute("""UPDATE t_task 
+                            SET first_checkin_reward_enabled=?, first_checkin_reward=?
+                            WHERE group_id=? AND task_name=?""",
+                          (enable, bonus, group_id, task_name))
+                status_text = f"已开启，奖励 {bonus} 分"
+            else:
+                c.execute("""UPDATE t_task 
+                            SET first_checkin_reward_enabled=?, first_checkin_reward=NULL
+                            WHERE group_id=? AND task_name=?""",
+                          (enable, group_id, task_name))
+                status_text = "已关闭"
+
+            conn.commit()
+            result = f"✅ 成功设置任务 [{task_name}] 的首次打卡奖励: {status_text}\n\n"
+            result += self.get_task_list(group_id)
+            return result
+
+        except Exception as e:
+            logger.exception(f"[PKTracker] 设置首次打卡奖励异常: {str(e)}")
+            return "❌ 设置失败,请稍后重试"
         finally:
             conn.close()
