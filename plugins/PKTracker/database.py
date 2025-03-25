@@ -42,13 +42,6 @@ class DatabaseManager:
                         update_time DATETIME DEFAULT CURRENT_TIMESTAMP,
                         FOREIGN KEY(task_id) REFERENCES t_task(task_id))''')
     
-        # 创建用户表
-        c.execute('''CREATE TABLE IF NOT EXISTS t_user
-                       (user_id TEXT PRIMARY KEY,
-                        name TEXT NOT NULL,
-                        create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
-                        update_time DATETIME DEFAULT CURRENT_TIMESTAMP)''')
-    
         # 创建管理员表
         c.execute('''CREATE TABLE IF NOT EXISTS t_admin
                        (group_id TEXT NOT NULL,
@@ -83,13 +76,6 @@ class DatabaseManager:
                    BEGIN
                        UPDATE t_checkin_log SET update_time = CURRENT_TIMESTAMP
                        WHERE checkin_id = NEW.checkin_id;
-                   END;''')
-    
-        c.execute('''CREATE TRIGGER IF NOT EXISTS tg_user_update 
-                   AFTER UPDATE ON t_user
-                   BEGIN
-                       UPDATE t_user SET update_time = CURRENT_TIMESTAMP
-                       WHERE user_id = NEW.user_id;
                    END;''')
     
         c.execute('''CREATE TRIGGER IF NOT EXISTS tg_admin_update 

@@ -56,12 +56,6 @@ class CheckinManager:
                 period_map = {'day': '今日', 'week': '本周', 'month': '本月'}
                 return f"❌ {period_map[frequency]}已达到最大打卡次数 ({max_checkins}次)"
 
-            # 检查用户是否已存在,不存在则添加
-            c.execute("SELECT 1 FROM t_user WHERE user_id=?", (user_id,))
-            if not c.fetchone():
-                c.execute("INSERT INTO t_user (user_id, name) VALUES (?, ?)",
-                          (user_id, f"用户{user_id[-6:]}"))
-
             # 记录打卡
             c.execute("""INSERT INTO t_checkin_log (task_id, user_id, checkin_time, content)
                         VALUES (?, ?, ?, ?)""",

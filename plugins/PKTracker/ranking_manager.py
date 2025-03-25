@@ -7,6 +7,88 @@ class RankingManager:
         self.db_path = db_path
         self.user_manager = user_manager
 
+    def get_user_bonus_detail(self, group_id: str, user_name: str = None, sender_id: str = None, page: int = 1) -> str:
+        """获取用户的积分详情
+        
+        Args:
+            group_id: 群组ID
+            user_name: 用户名称，可选
+            sender_id: 发送者ID，可选
+            page: 页码，默认为1
+            
+        Returns:
+            str: 积分详情信息
+        """
+        try:
+            # 如果没有指定用户名，则查询发送者的积分详情
+            user_id = sender_id
+            display_name = "你"
+            if user_name:
+                user_id = self.user_manager._get_user_id_by_nickname(user_name)
+                if not user_id:
+                    return f"❌ 未找到用户 [{user_name}]"
+                display_name = user_name
+
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+
+            # 先获取总记录数
+            c.execute("""
+                SELECT COUNT(*)
+                FROM t_checkin_log cl
+                JOIN t_task t ON cl.task_id = t.task_id
+                WHERE t.group_id = ? AND cl.user_id = ? AND t.enable = 1
+            """, (group_id, user_id))
+            
+            total_records = c.fetchone()[0]
+            page_size = 5  # 修改为每页5条
+            total_pages = (total_records + page_size - 1) // page_size
+            
+            # 确保页码有效
+            page = max(1, min(page, total_pages)) if total_pages > 0 else 1
+            offset = (page - 1) * page_size
+
+            # 获取分页数据
+            c.execute("""
+                SELECT 
+                    t.task_name,
+                    cl.checkin_time,
+                    cl.content,
+                    SUM(b.bonus_value) as total_bonus
+                FROM t_checkin_log cl
+                JOIN t_task t ON cl.task_id = t.task_id
+                LEFT JOIN t_bonus b ON cl.checkin_id = b.checkin_id
+                WHERE t.group_id = ? AND cl.user_id = ? AND t.enable = 1
+                GROUP BY cl.checkin_id
+                ORDER BY cl.checkin_time DESC
+                LIMIT ? OFFSET ?
+            """, (group_id, user_id, page_size, offset))
+
+            records = c.fetchall()
+            
+            if not records:
+                if page > 1:
+                    return f"❌ 第{page}页没有记录"
+                return f"📊 {display_name} 暂无打卡记录"
+
+            message = f"📊 {display_name}的打卡记录 (第{page}/{total_pages}页)\n"
+            message += "===================\n\n"
+
+            for task_name, checkin_time, content, total_bonus in records:
+                message += f"[{task_name}] {checkin_time} (+{total_bonus}分)\n"
+                if content:
+                    message += f"内容: {content}\n"
+                message += "\n"
+
+            return message
+
+        except Exception as e:
+            logger.exception(f"[PKTracker] 获取用户积分详情异常: {str(e)}")
+            return "❌ 获取用户积分详情失败,请稍后重试"
+        finally:
+            if 'conn' in locals() and conn is not None:
+                conn.close()
+
     def get_ranking(self, group_id: str, task_name: str = None) -> str:
         try:
             conn = sqlite3.connect(self.db_path)

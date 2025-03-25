@@ -53,7 +53,7 @@ class PKTracker(Plugin):
             logger.info("[PKTracker] 初始化成功")
         except Exception as e:
             logger.error(f"[PKTracker] 初始化异常：{e}")
-            raise "[PKTracker] init failed, ignore "
+            raise Exception(f"[PKTracker] init failed: {str(e)}")
 
     def _init_client(self):
         """初始化微信客户端"""
@@ -71,6 +71,17 @@ class PKTracker(Plugin):
         """加载配置模板"""
         try:
             plugin_config_path = os.path.join(self.path, "config.json.template")
+            if os.path.exists(plugin_config_path):
+                with open(plugin_config_path, "r", encoding="utf-8") as f:
+                    return json.load(f)
+        except Exception as e:
+            logger.exception(e)
+        return {}
+
+    def _load_config(self):
+        """加载插件配置"""
+        try:
+            plugin_config_path = os.path.join(os.path.dirname(__file__), "config.json")
             if os.path.exists(plugin_config_path):
                 with open(plugin_config_path, "r", encoding="utf-8") as f:
                     return json.load(f)
@@ -228,7 +239,29 @@ class PKTracker(Plugin):
                 return "格式错误,请使用: PKTracker 任务详情 [任务名称]"
             task_name = parts[2][1:-1]
             return self.task_manager.get_task_detail(group_id, task_name)
-
+            
+        # 处理积分详情命令
+        elif command == "积分详情":
+            page = 1
+            user_name = None
+            
+            # 解析参数
+            for part in parts[2:]:
+                if part.startswith('p[') and part.endswith(']'):
+                    try:
+                        page = int(part[2:-1])
+                        if page < 1:
+                            return "❌ 页码必须大于0"
+                    except ValueError:
+                        return "❌ 页码必须是正整数"
+                elif part.startswith('[') and part.endswith(']'):
+                    user_name = part[1:-1]
+            
+            # 根据参数返回相应的积分详情
+            if user_name:
+                return self.ranking_manager.get_user_bonus_detail(group_id, user_name=user_name, page=page)
+            else:
+                return self.ranking_manager.get_user_bonus_detail(group_id, sender_id=user_id, page=page)
         else:
             return "未知命令,请检查输入"
 
@@ -246,6 +279,13 @@ class PKTracker(Plugin):
         PKTracker 积分榜 [任务名称]
       - 查看所有任务排名:
         PKTracker 积分榜
+      - 查看积分详情:
+        PKTracker 积分详情 [用户名] p[页码]
+        例如: 
+        PKTracker 积分详情          (查看自己的第1页)
+        PKTracker 积分详情 p[2]     (查看自己的第2页)
+        PKTracker 积分详情 [张三]    (查看张三的第1页)
+        PKTracker 积分详情 [张三] p[2] (查看张三的第2页)
 
     🔹 管理员指令:
       1. 创建打卡任务:
@@ -259,10 +299,6 @@ class PKTracker(Plugin):
       4. 查看管理员:
          PKTracker 查看管理员
 
-        # 如果是超级管理员,添加超管命令说明
-        if kwargs.get("user_id") and self.is_super_admin(kwargs["user_id"]):
-            base_help += ""
-
     🔸 超级管理员指令:
       - 添加管理员:
         PKTracker 添加管理员 [用户名]
@@ -270,8 +306,6 @@ class PKTracker(Plugin):
       - 取消管理员:
         PKTracker 取消管理员 [用户名]
         例如: PKTracker 取消管理员 [张三]
-
-        base_help += ""
 
     🔸 积分规则:
       - 基础打卡: 1分
