@@ -1,19 +1,13 @@
 import sqlite3
 from common.log import logger
+from datetime import datetime
 
 class TaskManager:
     def __init__(self, db_path):
         self.db_path = db_path
 
     def set_frequency(self, group_id: str, task_name: str, frequency: str) -> str:
-        """设置任务打卡频率
-        Args:
-            group_id: 群组ID
-            task_name: 任务名称
-            frequency: 打卡频率(日/周/月)
-        Returns:
-            str: 设置结果提示
-        """
+        """设置任务打卡频率"""
         # 验证频率参数
         freq_map = {"日": "day", "周": "week", "月": "month"}
         if frequency not in freq_map:
@@ -27,23 +21,19 @@ class TaskManager:
             c.execute("""SELECT task_id FROM t_task 
                         WHERE group_id=? AND task_name=?""",
                       (group_id, task_name))
-            task = c.fetchone()
+            if not c.fetchone():
+                return f"❌ 任务 [{task_name}] 不存在，请先创建任务"
 
-            if task:
-                # 更新已存在的任务
-                c.execute("""UPDATE t_task 
-                            SET frequency=? 
-                            WHERE group_id=? AND task_name=?""",
-                          (freq_map[frequency], group_id, task_name))
-            else:
-                # 创建新任务
-                c.execute("""INSERT INTO t_task 
-                            (group_id, task_name, frequency) 
-                            VALUES (?, ?, ?)""",
-                          (group_id, task_name, freq_map[frequency]))
+            # 更新任务频率
+            c.execute("""UPDATE t_task 
+                        SET frequency=? 
+                        WHERE group_id=? AND task_name=?""",
+                      (freq_map[frequency], group_id, task_name))
 
             conn.commit()
-            return f"✅ 成功设置任务 [{task_name}] 的打卡频率为: {frequency}"
+            result = f"✅ 成功设置任务 [{task_name}] 的打卡频率为: {frequency}\n\n"
+            result += self.get_task_list(group_id)
+            return result
 
         except Exception as e:
             logger.exception(f"[PKTracker] 设置任务频率异常: {str(e)}")
@@ -52,121 +42,46 @@ class TaskManager:
             conn.close()
 
     def get_task_list(self, group_id: str) -> str:
-        """获取群内任务列表
-        Args:
-            group_id: 群组ID
-        Returns:
-            str: 任务列表信息
-        """
+        """获取任务列表"""
         try:
             conn = sqlite3.connect(self.db_path)
             c = conn.cursor()
-
-            # 获取所有任务信息
+            
             c.execute("""
-                SELECT 
-                    task_name,
-                    frequency,
-                    first_checkin_reward_enabled,
-                    first_checkin_reward,
-                    consecutive_checkin_reward_enabled,
-                    consecutive_checkin_reward,
-                    reminder_time,
-                    enable,
-                    (SELECT COUNT(*) FROM t_checkin_log WHERE task_id = t.task_id) as total_checkins
+                SELECT t.task_name, t.frequency, t.max_checkins,
+                       COUNT(cl.checkin_id) as total_checkins
                 FROM t_task t
-                WHERE group_id = ?
-                ORDER BY enable DESC, task_name ASC
+                LEFT JOIN t_checkin_log cl ON t.task_id = cl.task_id
+                WHERE t.group_id=? AND t.enable=1
+                GROUP BY t.task_id
+                ORDER BY t.task_id DESC
             """, (group_id,))
-
+            
             tasks = c.fetchall()
-
             if not tasks:
-                return "📝 当前群组暂无任务"
-
-            # 生成任务列表消息
+                return "当前群组暂无任务"
+            
             message = "📝 任务列表\n==================="
-
-            for task in tasks:
-                (name, freq, first_enabled, first_reward,
-                 consec_enabled, consec_reward, reminder, enable, total_checkins) = task
-
-                # 转换频率显示
-                freq_map = {"day": "每日", "week": "每周", "month": "每月"}
-                freq_text = freq_map.get(freq, freq)
-
-                # 状态emoji
-                status = "✅" if enable else "❌"
-
-                message += f"\n\n{status} [{name}]"
+            
+            freq_map = {"day": "每日", "week": "每周", "month": "每月"}
+            for task_name, frequency, max_checkins, total_checkins in tasks:
+                freq_text = freq_map.get(frequency, frequency)
+                message += f"\n\n✅ [{task_name}]"
                 message += f"\n🔸 打卡频率: {freq_text}"
                 message += f"\n🔸 总打卡次数: {total_checkins}次"
-
-                # 奖励信息
-                rewards = []
-                if first_enabled:
-                    rewards.append(f"首次打卡+{first_reward}分")
-                if consec_enabled:
-                    rewards.append(f"连续打卡+{consec_reward}分")
-                message += f"\n🔸 奖励设置: {', '.join(rewards)}"
-
-                # 提醒时间
-                if reminder:
-                    message += f"\n🔸 提醒时间: {reminder}"
-
+                message += f"\n🔸 最大打卡次数: {max_checkins}次"
+                message += "\n🔸 奖励设置: 首次打卡+3分, 连续打卡+3分"
+            
             return message
-
+            
         except Exception as e:
             logger.exception(f"[PKTracker] 获取任务列表异常: {str(e)}")
-            return "❌ 获取任务列表失败,请稍后重试"
-        finally:
-            conn.close()
-
-    def create_task(self, group_id: str, task_name: str) -> str:
-        try:
-            conn = sqlite3.connect(self.db_path)
-            c = conn.cursor()
-
-            # 检查任务名是否已存在
-            c.execute("""SELECT 1 FROM t_task 
-                        WHERE group_id=? AND task_name=?""",
-                      (group_id, task_name))
-            if c.fetchone():
-                return f"❌ 任务 [{task_name}] 已存在"
-
-            # 创建新任务,设置默认值
-            c.execute("""INSERT INTO t_task 
-                        (group_id, task_name, frequency, max_checkins, enable) 
-                        VALUES (?, ?, 'day', 1, 1)""",
-                      (group_id, task_name))
-
-            conn.commit()
-            return f"""✅ 任务 [{task_name}] 创建成功!
-    🔸 默认设置:
-      - 打卡频率: 每日
-      - 打卡次数: 1次
-      - 首次打卡奖励: +3分
-      - 连续打卡奖励: +3分
-    可使用以下命令修改设置:
-      - PKTracker 设置频率 [{task_name}] [日/周/月]
-      - PKTracker 设置次数 [{task_name}] [次数]
-      - PKTracker 设置提醒 [{task_name}] [时间]"""
-
-        except Exception as e:
-            logger.exception(f"[PKTracker] 创建任务异常: {str(e)}")
-            return "❌ 创建任务失败,请稍后重试"
+            return "❌ 获取任务列表失败"
         finally:
             conn.close()
 
     def set_max_checkins(self, group_id: str, task_name: str, max_checkins: int) -> str:
-        """设置任务打卡次数限制
-        Args:
-            group_id: 群组ID
-            task_name: 任务名称
-            max_checkins: 最大打卡次数
-        Returns:
-            str: 设置结果提示
-        """
+        """设置任务打卡次数限制"""
         if max_checkins < 1:
             return "❌ 打卡次数必须大于0"
 
@@ -188,10 +103,127 @@ class TaskManager:
                       (max_checkins, group_id, task_name))
 
             conn.commit()
-            return f"✅ 成功设置任务 [{task_name}] 的最大打卡次数为: {max_checkins}"
+            result = f"✅ 成功设置任务 [{task_name}] 的最大打卡次数为: {max_checkins}\n\n"
+            result += self.get_task_list(group_id)
+            return result
 
         except Exception as e:
             logger.exception(f"[PKTracker] 设置打卡次数异常: {str(e)}")
             return "❌ 设置失败,请稍后重试"
+        finally:
+            conn.close()
+
+    def create_task(self, group_id: str, task_name: str) -> str:
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+
+            # 检查任务名是否已存在
+            c.execute("""SELECT 1 FROM t_task 
+                        WHERE group_id=? AND task_name=?""",
+                      (group_id, task_name))
+            if c.fetchone():
+                return f"❌ 任务 [{task_name}] 已存在"
+
+            # 创建新任务,设置默认值
+            c.execute("""INSERT INTO t_task 
+                        (group_id, task_name, frequency, max_checkins, enable) 
+                        VALUES (?, ?, 'day', 1, 1)""",
+                      (group_id, task_name))
+            conn.commit()
+
+            # 获取任务信息
+            c.execute("""SELECT frequency, max_checkins FROM t_task 
+                        WHERE group_id=? AND task_name=?""",
+                      (group_id, task_name))
+            frequency, max_checkins = c.fetchone()
+            
+            freq_map = {'day': '每日', 'week': '每周', 'month': '每月'}
+            freq_text = freq_map.get(frequency, frequency)
+            checkins_text = f"每{freq_text}最多打卡{max_checkins}次" if max_checkins > 0 else "不限制打卡次数"
+            
+            return f"""✅ 创建任务成功!
+任务名称: [{task_name}]
+打卡频率: {freq_text}
+打卡限制: {checkins_text}
+
+{self.get_task_list(group_id)}"""
+
+        except Exception as e:
+            logger.exception(f"[PKTracker] 创建任务异常: {str(e)}")
+            return "❌ 创建任务失败,请稍后重试"
+        finally:
+            conn.close()
+
+    def get_task_detail(self, group_id: str, task_name: str) -> str:
+        """获取任务详细信息"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+            
+            # 获取任务基本信息
+            c.execute("""
+                SELECT t.task_id, t.frequency, t.max_checkins,
+                       COUNT(DISTINCT cl.user_id) as total_users,
+                       COUNT(cl.checkin_id) as total_checkins,
+                       MAX(cl.checkin_time) as last_checkin
+                FROM t_task t
+                LEFT JOIN t_checkin_log cl ON t.task_id = cl.task_id
+                WHERE t.group_id=? AND t.task_name=? AND t.enable=1
+                GROUP BY t.task_id
+            """, (group_id, task_name))
+            
+            task = c.fetchone()
+            if not task:
+                return f"❌ 任务 [{task_name}] 不存在或未启用"
+            
+            task_id, frequency, max_checkins, total_users, total_checkins, last_checkin = task
+            
+            # 获取今日打卡人数
+            today = datetime.now().strftime('%Y-%m-%d')
+            c.execute("""
+                SELECT COUNT(DISTINCT user_id)
+                FROM t_checkin_log
+                WHERE task_id=? AND date(checkin_time)=?
+            """, (task_id, today))
+            today_users = c.fetchone()[0]
+            
+            # 获取连续打卡人数
+            c.execute("""
+                SELECT COUNT(DISTINCT user_id)
+                FROM (
+                    SELECT user_id, COUNT(*) as consecutive_days
+                    FROM t_checkin_log
+                    WHERE task_id=? AND checkin_time >= date('now', '-3 days')
+                    GROUP BY user_id
+                    HAVING consecutive_days >= 3
+                )
+            """, (task_id,))
+            consecutive_users = c.fetchone()[0]
+            
+            freq_map = {"day": "每日", "week": "每周", "month": "每月"}
+            freq_text = freq_map.get(frequency, frequency)
+            
+            message = f"📊 任务详情 [{task_name}]\n"
+            message += "===================\n\n"
+            message += f"🔸 基本信息:\n"
+            message += f"   - 打卡频率: {freq_text}\n"
+            message += f"   - 单次打卡积分: 1分\n"
+            message += f"   - 最大打卡次数: {max_checkins}次/{freq_text}\n"
+            message += f"   - 首次打卡奖励: +3分\n"
+            message += f"   - 连续打卡奖励: +3分\n\n"
+            message += f"🔸 统计信息:\n"
+            message += f"   - 参与总人数: {total_users}人\n"
+            message += f"   - 总打卡次数: {total_checkins}次\n"
+            message += f"   - 今日打卡人数: {today_users}人\n"
+            message += f"   - 连续打卡达标: {consecutive_users}人\n"
+            if last_checkin:
+                message += f"   - 最后打卡时间: {last_checkin}\n"
+            
+            return message
+            
+        except Exception as e:
+            logger.exception(f"[PKTracker] 获取任务详情异常: {str(e)}")
+            return "❌ 获取任务详情失败"
         finally:
             conn.close()

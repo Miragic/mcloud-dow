@@ -60,14 +60,15 @@ class DatabaseManager:
         # 创建积分表
         c.execute('''CREATE TABLE IF NOT EXISTS t_bonus
                        (bonus_id INTEGER PRIMARY KEY AUTOINCREMENT,
-                        task_id INTEGER,
+                        task_id INTEGER NOT NULL,
                         user_id TEXT NOT NULL,
-                        type TEXT CHECK(type IN ('first_checkin','consecutive','week','month')),
-                        amount INTEGER NOT NULL,
-                        date_awarded DATE NOT NULL,
+                        checkin_id INTEGER NOT NULL,
+                        bonus_type TEXT CHECK(bonus_type IN ('base','first','consecutive','week','month')),
+                        bonus_value INTEGER NOT NULL,
                         create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
                         update_time DATETIME DEFAULT CURRENT_TIMESTAMP,
-                        FOREIGN KEY(task_id) REFERENCES t_task(task_id))''')
+                        FOREIGN KEY(task_id) REFERENCES t_task(task_id),
+                        FOREIGN KEY(checkin_id) REFERENCES t_checkin_log(checkin_id))''')
     
         # 创建触发器,用于自动更新update_time
         c.execute('''CREATE TRIGGER IF NOT EXISTS tg_task_update 

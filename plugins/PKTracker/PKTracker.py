@@ -156,11 +156,13 @@ class PKTracker(Plugin):
                 return "只有管理员可以设置频率"
             elif len(parts) != 4:
                 return "格式错误,请使用: PKTracker 设置频率 [任务名称] [日/周/月]"
-            #取[]内的值
-            parts[2] = parts[2].replace('[', '').replace(']', '')
-            parts[3] = parts[3].replace('[', '').replace(']', '')
-            return self.task_manager.set_frequency(group_id, parts[2], parts[3])
-                    
+            task_name = parts[2][1:-1]
+            frequency = parts[3][1:-1]
+            result = self.task_manager.set_frequency(group_id, task_name, frequency)
+            if result.startswith("✅"):  # 如果设置成功
+                return result + "\n\n" + self.task_manager.get_task_list(group_id)
+            return result
+
         # 处理查询命令
         elif command == "积分榜":
             return self.ranking_manager.get_ranking(group_id, parts[2] if len(parts) > 2 else None)
@@ -215,11 +217,18 @@ class PKTracker(Plugin):
                 return "格式错误,请使用: PKTracker 设置次数 [任务名称] [次数]"
             try:
                 task_name = parts[2][1:-1]
-                max_checkins = int(parts[3])
+                max_checkins = int(parts[3][1:-1])
+                # 直接返回 task_manager 的结果，不需要再次获取任务列表
                 return self.task_manager.set_max_checkins(group_id, task_name, max_checkins)
             except ValueError:
                 return "❌ 次数必须是整数且大于0"
         
+        elif command == "任务详情":
+            if len(parts) != 3 or not (parts[2].startswith('[') and parts[2].endswith(']')):
+                return "格式错误,请使用: PKTracker 任务详情 [任务名称]"
+            task_name = parts[2][1:-1]
+            return self.task_manager.get_task_detail(group_id, task_name)
+
         else:
             return "未知命令,请检查输入"
 

@@ -12,56 +12,56 @@ class RankingManager:
             conn = sqlite3.connect(self.db_path)
             c = conn.cursor()
 
+            # 检查任务是否存在
             if task_name:
-                # 检查任务是否存在
                 c.execute("""SELECT task_id FROM t_task 
                             WHERE group_id=? AND task_name=? AND enable=1""",
                           (group_id, task_name))
                 task = c.fetchone()
                 if not task:
                     return f"❌ 任务 [{task_name}] 不存在或未启用"
-
                 task_filter = f"AND cl.task_id = {task[0]}"
                 title = f"[{task_name}]"
             else:
                 task_filter = ""
                 title = "[全部任务]"
 
-            # 修改查询以合并相同任务的统计
+            # 修改查询以使用新的积分表结构
             c.execute(f"""
                 WITH task_points AS (
                     SELECT 
                         cl.user_id,
                         t.task_name,
                         COUNT(*) as task_checkin_count,
-                        COUNT(*) + COALESCE(SUM(b.amount), 0) as task_total_points
+                        SUM(COALESCE(b.bonus_value, 0)) as task_total_points
                     FROM t_checkin_log cl
                     JOIN t_task t ON cl.task_id = t.task_id
-                    LEFT JOIN t_bonus b ON cl.task_id = b.task_id AND cl.user_id = b.user_id
+                    LEFT JOIN t_bonus b ON cl.checkin_id = b.checkin_id
                     WHERE t.group_id = ? AND t.enable = 1 {task_filter}
                     GROUP BY cl.user_id, t.task_id, t.task_name
                 ),
                 user_points AS (
                     SELECT 
                         cl.user_id,
-                        COUNT(*) as total_checkins,
-                        COALESCE(SUM(b.amount), 0) as bonus_points,
+                        COUNT(DISTINCT cl.checkin_id) as total_checkins,
+                        SUM(COALESCE(b.bonus_value, 0)) as total_points,
                         MAX(cl.checkin_time) as last_checkin,
                         GROUP_CONCAT(DISTINCT tp.task_name || ':' || tp.task_checkin_count || ':' || tp.task_total_points) as task_details
                     FROM t_checkin_log cl
-                    LEFT JOIN t_bonus b ON cl.task_id = b.task_id AND cl.user_id = b.user_id
+                    JOIN t_task t ON cl.task_id = t.task_id
+                    LEFT JOIN t_bonus b ON cl.checkin_id = b.checkin_id
                     LEFT JOIN task_points tp ON cl.user_id = tp.user_id
-                    WHERE cl.task_id IN (SELECT task_id FROM t_task WHERE group_id=? AND enable=1) {task_filter}
+                    WHERE t.group_id = ? AND t.enable = 1 {task_filter}
                     GROUP BY cl.user_id
                 )
                 SELECT 
                     up.user_id,
                     up.total_checkins,
-                    up.total_checkins + up.bonus_points as total_points,
+                    up.total_points,
                     up.last_checkin,
                     up.task_details
                 FROM user_points up
-                ORDER BY total_points DESC, last_checkin ASC
+                ORDER BY up.total_points DESC, up.last_checkin ASC
                 LIMIT 10
             """, (group_id, group_id))
 
