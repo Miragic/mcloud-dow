@@ -458,6 +458,29 @@ class PKTracker(Plugin):
             
             task_name = parts[2][1:-1]
             return self.task_manager.delete_task(group_id, task_name)
+                # 处理设置提醒时间命令
+        elif command == "设置提醒时间":
+            if not self.admin_manager.is_admin(group_id, user_id):
+                return "只有管理员可以设置提醒时间"
+            
+            if len(parts) < 4:
+                return "格式错误,请使用: PKTracker 设置提醒时间 [任务名称] time[提醒时间] t[提醒内容]"
+            
+            task_name = parts[2][1:-1]
+            reminder_time = None
+            remind_text = None
+            
+            # 解析参数
+            for part in parts[3:]:
+                if part.startswith('time[') and part.endswith(']'):
+                    reminder_time = part[5:-1]
+                elif part.startswith('t[') and part.endswith(']'):
+                    remind_text = part[2:-1]
+            
+            if reminder_time is None:
+                return "❌ 请设置提醒时间：time[HH:MM]"
+                
+            return self.task_manager.set_reminder(group_id, task_name, reminder_time, remind_text)
         else:
             return "未知命令,请检查输入"
 

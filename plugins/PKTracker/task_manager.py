@@ -53,7 +53,7 @@ class TaskManager:
                        t.first_checkin_reward_enabled, t.first_checkin_reward,
                        t.week_checkin_reward_enabled, t.week_checkin_reward,
                        t.month_checkin_reward_enabled, t.month_checkin_reward,
-                       t.enable, t.base_score
+                       t.enable, t.base_score,t.reminder_time,t.remind_text
                 FROM t_task t
                 LEFT JOIN t_checkin_log cl ON t.task_id = cl.task_id
                 WHERE t.group_id=?
@@ -73,12 +73,16 @@ class TaskManager:
                  first_enable, first_bonus,
                  weekly_enable, weekly_bonus,
                  monthly_enable, monthly_bonus,
-                 task_enable, base_score) in tasks:
+                 task_enable, base_score,reminder_time,remind_text) in tasks:
                 freq_text = freq_map.get(frequency, frequency)
                 message += f"\n\n{'✅' if task_enable else '❌'} [{task_name}]"
                 message += f" ({('已启用' if task_enable else '已禁用')})"
                 message += f"\n🔸 打卡频率: {freq_text}"
-                message += f"\n🔸 基础分数: {base_score}分"
+                message += f"\n🔸 基础分数: {base_score}分\n"
+                if reminder_time:
+                    message += f"   - 提醒时间: {reminder_time}\n"
+                    if remind_text:
+                        message += f"   - 提醒内容: {remind_text}\n"
                 message += f"\n🔸 总打卡次数: {total_checkins}次"
                 message += f"\n🔸 最大打卡次数: {max_checkins}次"
                 message += "\n🔸 奖励设置:"
@@ -185,7 +189,7 @@ class TaskManager:
                        t.consecutive_checkin_reward_enabled, t.consecutive_checkin_reward,
                        t.week_checkin_reward_enabled, t.week_checkin_reward,
                        t.month_checkin_reward_enabled, t.month_checkin_reward,
-                       t.enable, t.base_score
+                       t.enable, t.base_score, t.reminder_time,t.remind_text
                 FROM t_task t
                 LEFT JOIN t_checkin_log cl ON t.task_id = cl.task_id
                 WHERE t.group_id=? AND t.task_name=?
@@ -199,7 +203,7 @@ class TaskManager:
             (task_id, frequency, max_checkins, total_users, total_checkins, last_checkin,
              first_enable, first_bonus, continuous_enable, continuous_bonus,
              weekly_enable, weekly_bonus, monthly_enable, monthly_bonus,
-             task_enable) = task
+             task_enable,base_score,reminder_time,remind_text) = task
             
             # 获取今日打卡人数
             today = datetime.now().strftime('%Y-%m-%d')
@@ -233,6 +237,10 @@ class TaskManager:
             message += f"   - 打卡频率: {freq_text}\n"
             message += f"   - 基础分数: {base_score}分\n"
             message += f"   - 最大打卡次数: {max_checkins}次/{freq_text}\n"
+            if reminder_time:
+                message += f"   - 提醒时间: {reminder_time}\n"
+                if remind_text:
+                    message += f"   - 提醒内容: {remind_text}\n"
             message += f"   - 首次打卡: {'开启 (+' + str(first_bonus) + '分)' if first_enable else '关闭'}\n"
             message += f"   - 连续打卡: {'开启 (+' + str(continuous_bonus) + '分)' if continuous_enable else '关闭'}\n"
             message += f"   - 周冠军: {'开启 (+' + str(weekly_bonus) + '分)' if weekly_enable else '关闭'}\n"
@@ -513,5 +521,54 @@ class TaskManager:
         except Exception as e:
             logger.exception(f"[PKTracker] 删除任务异常: {str(e)}")
             return "❌ 删除失败,请稍后重试"
+        finally:
+            conn.close()
+
+    def set_reminder(self, group_id: str, task_name: str, reminder_time: str, remind_text: str = None) -> str:
+        """设置任务提醒时间和内容
+        
+        Args:
+            group_id: 群组ID
+            task_name: 任务名称
+            reminder_time: 提醒时间 (HH:MM)
+            remind_text: 提醒内容
+            
+        Returns:
+            str: 设置结果信息
+        """
+        try:
+            # 验证时间格式
+            try:
+                datetime.strptime(reminder_time, '%H:%M')
+            except ValueError:
+                return "❌ 时间格式错误，请使用 HH:MM 格式，例如：08:00"
+
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+
+            # 检查任务是否存在
+            c.execute("""SELECT task_id FROM t_task 
+                        WHERE group_id=? AND task_name=?""",
+                      (group_id, task_name))
+            if not c.fetchone():
+                return f"❌ 任务 [{task_name}] 不存在"
+
+            # 更新提醒设置
+            c.execute("""UPDATE t_task 
+                        SET reminder_time=?, remind_text=?
+                        WHERE group_id=? AND task_name=?""",
+                      (reminder_time, remind_text, group_id, task_name))
+
+            conn.commit()
+            result = f"✅ 成功设置任务 [{task_name}] 的提醒:\n"
+            result += f"🕐 提醒时间: {reminder_time}\n"
+            if remind_text:
+                result += f"📝 提醒内容: {remind_text}\n"
+            result += "\n" + self.get_task_list(group_id)
+            return result
+
+        except Exception as e:
+            logger.exception(f"[PKTracker] 设置提醒异常: {str(e)}")
+            return "❌ 设置失败,请稍后重试"
         finally:
             conn.close()

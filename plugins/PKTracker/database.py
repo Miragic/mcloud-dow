@@ -28,6 +28,7 @@ class DatabaseManager:
                         consecutive_checkin_reward_enabled INTEGER DEFAULT 1,
                         consecutive_checkin_reward INTEGER DEFAULT 3,
                         reminder_time TEXT,
+                        remind_text TEXT,
                         enable INTEGER DEFAULT 1,
                         create_time DATETIME DEFAULT CURRENT_TIMESTAMP,
                         update_time DATETIME DEFAULT CURRENT_TIMESTAMP)''')
