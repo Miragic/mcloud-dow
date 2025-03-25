@@ -42,7 +42,6 @@ class TaskManager:
             conn.close()
 
     def get_task_list(self, group_id: str) -> str:
-        """获取任务列表"""
         try:
             conn = sqlite3.connect(self.db_path)
             c = conn.cursor()
@@ -50,7 +49,10 @@ class TaskManager:
             c.execute("""
                 SELECT t.task_name, t.frequency, t.max_checkins,
                        COUNT(cl.checkin_id) as total_checkins,
-                       t.first_checkin_reward_enabled, t.first_checkin_reward
+                       t.consecutive_checkin_reward_enabled, t.consecutive_checkin_reward,
+                       t.first_checkin_reward_enabled, t.first_checkin_reward,
+                       t.week_checkin_reward_enabled, t.week_checkin_reward,
+                       t.month_checkin_reward_enabled, t.month_checkin_reward
                 FROM t_task t
                 LEFT JOIN t_checkin_log cl ON t.task_id = cl.task_id
                 WHERE t.group_id=? AND t.enable=1
@@ -65,13 +67,21 @@ class TaskManager:
             message = "📝 任务列表\n==================="
             
             freq_map = {"day": "每日", "week": "每周", "month": "每月"}
-            for task_name, frequency, max_checkins, total_checkins, first_enable, first_bonus in tasks:
+            for (task_name, frequency, max_checkins, total_checkins, 
+                 continuous_enable, continuous_bonus,
+                 first_enable, first_bonus,
+                 weekly_enable, weekly_bonus,
+                 monthly_enable, monthly_bonus) in tasks:
                 freq_text = freq_map.get(frequency, frequency)
                 message += f"\n\n✅ [{task_name}]"
                 message += f"\n🔸 打卡频率: {freq_text}"
                 message += f"\n🔸 总打卡次数: {total_checkins}次"
                 message += f"\n🔸 最大打卡次数: {max_checkins}次"
-                message += f"\n🔸 首次打卡: {'开启 (+' + str(first_bonus) + '分)' if first_enable else '关闭'}"
+                message += "\n🔸 奖励设置:"
+                message += f"\n   - 首次打卡: {'开启 (+' + str(first_bonus) + '分)' if first_enable else '关闭'}"
+                message += f"\n   - 连续打卡: {'开启 (+' + str(continuous_bonus) + '分)' if continuous_enable else '关闭'}"
+                message += f"\n   - 周冠军: {'开启 (+' + str(weekly_bonus) + '分)' if weekly_enable else '关闭'}"
+                message += f"\n   - 月冠军: {'开启 (+' + str(monthly_bonus) + '分)' if monthly_enable else '关闭'}"
             
             return message
             
@@ -167,7 +177,11 @@ class TaskManager:
                 SELECT t.task_id, t.frequency, t.max_checkins,
                        COUNT(DISTINCT cl.user_id) as total_users,
                        COUNT(cl.checkin_id) as total_checkins,
-                       MAX(cl.checkin_time) as last_checkin
+                       MAX(cl.checkin_time) as last_checkin,
+                       t.first_checkin_reward_enabled, t.first_checkin_reward,
+                       t.consecutive_checkin_reward_enabled, t.consecutive_checkin_reward,
+                       t.week_checkin_reward_enabled, t.week_checkin_reward,
+                       t.month_checkin_reward_enabled, t.month_checkin_reward
                 FROM t_task t
                 LEFT JOIN t_checkin_log cl ON t.task_id = cl.task_id
                 WHERE t.group_id=? AND t.task_name=? AND t.enable=1
@@ -178,7 +192,9 @@ class TaskManager:
             if not task:
                 return f"❌ 任务 [{task_name}] 不存在或未启用"
             
-            task_id, frequency, max_checkins, total_users, total_checkins, last_checkin = task
+            (task_id, frequency, max_checkins, total_users, total_checkins, last_checkin,
+             first_enable, first_bonus, continuous_enable, continuous_bonus,
+             weekly_enable, weekly_bonus, monthly_enable, monthly_bonus) = task
             
             # 获取今日打卡人数
             today = datetime.now().strftime('%Y-%m-%d')
@@ -211,8 +227,10 @@ class TaskManager:
             message += f"   - 打卡频率: {freq_text}\n"
             message += f"   - 单次打卡积分: 1分\n"
             message += f"   - 最大打卡次数: {max_checkins}次/{freq_text}\n"
-            message += f"   - 首次打卡奖励: +3分\n"
-            message += f"   - 连续打卡奖励: +3分\n\n"
+            message += f"   - 首次打卡: {'开启 (+' + str(first_bonus) + '分)' if first_enable else '关闭'}\n"
+            message += f"   - 连续打卡: {'开启 (+' + str(continuous_bonus) + '分)' if continuous_enable else '关闭'}\n"
+            message += f"   - 周冠军: {'开启 (+' + str(weekly_bonus) + '分)' if weekly_enable else '关闭'}\n"
+            message += f"   - 月冠军: {'开启 (+' + str(monthly_bonus) + '分)' if monthly_enable else '关闭'}\n\n"
             message += f"🔸 统计信息:\n"
             message += f"   - 参与总人数: {total_users}人\n"
             message += f"   - 总打卡次数: {total_checkins}次\n"
@@ -273,6 +291,54 @@ class TaskManager:
 
         except Exception as e:
             logger.exception(f"[PKTracker] 设置首次打卡奖励异常: {str(e)}")
+            return "❌ 设置失败,请稍后重试"
+        finally:
+            conn.close()
+
+    def set_continuous_checkin(self, group_id: str, task_name: str, enable: int, bonus: int = None) -> str:
+        """设置任务连续打卡奖励
+        
+        Args:
+            group_id: 群组ID
+            task_name: 任务名称
+            enable: 是否启用 (1: 启用, 0: 禁用)
+            bonus: 奖励分数
+            
+        Returns:
+            str: 设置结果信息
+        """
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+
+            # 检查任务是否存在
+            c.execute("""SELECT task_id FROM t_task 
+                        WHERE group_id=? AND task_name=?""",
+                      (group_id, task_name))
+            if not c.fetchone():
+                return f"❌ 任务 [{task_name}] 不存在"
+
+            # 更新连续打卡设置
+            if enable == 1:
+                c.execute("""UPDATE t_task 
+                            SET consecutive_checkin_reward_enabled=?, consecutive_checkin_reward=?
+                            WHERE group_id=? AND task_name=?""",
+                          (enable, bonus, group_id, task_name))
+                status_text = f"已开启，奖励 {bonus} 分"
+            else:
+                c.execute("""UPDATE t_task 
+                            SET consecutive_checkin_reward_enabled=?, consecutive_checkin_reward=NULL
+                            WHERE group_id=? AND task_name=?""",
+                          (enable, group_id, task_name))
+                status_text = "已关闭"
+
+            conn.commit()
+            result = f"✅ 成功设置任务 [{task_name}] 的连续打卡奖励: {status_text}\n\n"
+            result += self.get_task_list(group_id)
+            return result
+
+        except Exception as e:
+            logger.exception(f"[PKTracker] 设置连续打卡奖励异常: {str(e)}")
             return "❌ 设置失败,请稍后重试"
         finally:
             conn.close()
