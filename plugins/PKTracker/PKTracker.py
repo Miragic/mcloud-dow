@@ -336,6 +336,81 @@ class PKTracker(Plugin):
                 return "❌ 开启首次打卡时必须设置分数"
                 
             return self.task_manager.set_first_checkin(group_id, task_name, enable, bonus)
+        # 处理设置周冠军命令
+        elif command == "设置周冠军":
+            if not self.admin_manager.is_admin(group_id, user_id):
+                return "只有管理员可以设置周冠军规则"
+            
+            if len(parts) < 4:
+                return "格式错误,请使用: PKTracker 设置周冠军 [任务名称] s[开/关] b[分数]"
+            
+            task_name = parts[2][1:-1]
+            enable = None
+            bonus = None
+            
+            # 解析参数
+            for part in parts[3:]:
+                if part.startswith('s[') and part.endswith(']'):
+                    status = part[2:-1]
+                    if status == "开":
+                        enable = 1
+                    elif status == "关":
+                        enable = 0
+                    else:
+                        return "❌ 状态必须是 开 或 关"
+                elif part.startswith('b[') and part.endswith(']'):
+                    try:
+                        bonus = int(part[2:-1])
+                        if bonus < 0:
+                            return "❌ 分数必须大于等于0"
+                    except ValueError:
+                        return "❌ 分数必须是整数"
+            
+            if enable is None:
+                return "❌ 请设置周冠军状态：s[开] 或 s[关]"
+            
+            if enable == 1 and bonus is None:
+                return "❌ 开启周冠军时必须设置分数"
+                
+            return self.task_manager.set_week_checkin(group_id, task_name, enable, bonus)
+
+        # 处理设置月冠军命令
+        elif command == "设置月冠军":
+            if not self.admin_manager.is_admin(group_id, user_id):
+                return "只有管理员可以设置月冠军规则"
+            
+            if len(parts) < 4:
+                return "格式错误,请使用: PKTracker 设置月冠军 [任务名称] s[开/关] b[分数]"
+            
+            task_name = parts[2][1:-1]
+            enable = None
+            bonus = None
+            
+            # 解析参数
+            for part in parts[3:]:
+                if part.startswith('s[') and part.endswith(']'):
+                    status = part[2:-1]
+                    if status == "开":
+                        enable = 1
+                    elif status == "关":
+                        enable = 0
+                    else:
+                        return "❌ 状态必须是 开 或 关"
+                elif part.startswith('b[') and part.endswith(']'):
+                    try:
+                        bonus = int(part[2:-1])
+                        if bonus < 0:
+                            return "❌ 分数必须大于等于0"
+                    except ValueError:
+                        return "❌ 分数必须是整数"
+            
+            if enable is None:
+                return "❌ 请设置月冠军状态：s[开] 或 s[关]"
+            
+            if enable == 1 and bonus is None:
+                return "❌ 开启月冠军时必须设置分数"
+                
+            return self.task_manager.set_month_checkin(group_id, task_name, enable, bonus)
         else:
             return "未知命令,请检查输入"
 
@@ -376,7 +451,13 @@ class PKTracker(Plugin):
       5. 设置首次打卡:
          PKTracker 设置首次打卡 [任务名称] s[开/关] b[分数]
          例如: PKTracker 设置首次打卡 [早起] s[开] b[3]
-      6. 查看管理员:
+      6. 设置周冠军:
+         PKTracker 设置周冠军 [任务名称] s[开/关] b[分数]
+         例如: PKTracker 设置周冠军 [早起] s[开] b[3]
+      7. 设置月冠军:
+         PKTracker 设置月冠军 [任务名称] s[开/关] b[分数]
+         例如: PKTracker 设置月冠军 [早起] s[开] b[5]
+      8. 查看管理员:
          PKTracker 查看管理员
 
     🔸 超级管理员指令:

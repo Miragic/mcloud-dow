@@ -342,3 +342,79 @@ class TaskManager:
             return "❌ 设置失败,请稍后重试"
         finally:
             conn.close()
+
+    def set_week_checkin(self, group_id: str, task_name: str, enable: int, bonus: int = None) -> str:
+        """设置任务周冠军奖励"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+
+            # 检查任务是否存在
+            c.execute("""SELECT task_id FROM t_task 
+                        WHERE group_id=? AND task_name=?""",
+                      (group_id, task_name))
+            if not c.fetchone():
+                return f"❌ 任务 [{task_name}] 不存在"
+
+            # 更新周冠军设置
+            if enable == 1:
+                c.execute("""UPDATE t_task 
+                            SET week_checkin_reward_enabled=?, week_checkin_reward=?
+                            WHERE group_id=? AND task_name=?""",
+                          (enable, bonus, group_id, task_name))
+                status_text = f"已开启，奖励 {bonus} 分"
+            else:
+                c.execute("""UPDATE t_task 
+                            SET week_checkin_reward_enabled=?, week_checkin_reward=NULL
+                            WHERE group_id=? AND task_name=?""",
+                          (enable, group_id, task_name))
+                status_text = "已关闭"
+
+            conn.commit()
+            result = f"✅ 成功设置任务 [{task_name}] 的周冠军奖励: {status_text}\n\n"
+            result += self.get_task_list(group_id)
+            return result
+
+        except Exception as e:
+            logger.exception(f"[PKTracker] 设置周冠军奖励异常: {str(e)}")
+            return "❌ 设置失败,请稍后重试"
+        finally:
+            conn.close()
+
+    def set_month_checkin(self, group_id: str, task_name: str, enable: int, bonus: int = None) -> str:
+        """设置任务月冠军奖励"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            c = conn.cursor()
+
+            # 检查任务是否存在
+            c.execute("""SELECT task_id FROM t_task 
+                        WHERE group_id=? AND task_name=?""",
+                      (group_id, task_name))
+            if not c.fetchone():
+                return f"❌ 任务 [{task_name}] 不存在"
+
+            # 更新月冠军设置
+            if enable == 1:
+                c.execute("""UPDATE t_task 
+                            SET month_checkin_reward_enabled=?, month_checkin_reward=?
+                            WHERE group_id=? AND task_name=?""",
+                          (enable, bonus, group_id, task_name))
+                status_text = f"已开启，奖励 {bonus} 分"
+            else:
+                c.execute("""UPDATE t_task 
+                            SET month_checkin_reward_enabled=?, month_checkin_reward=NULL
+                            WHERE group_id=? AND task_name=?""",
+                          (enable, group_id, task_name))
+                status_text = "已关闭"
+
+            conn.commit()
+            result = f"✅ 成功设置任务 [{task_name}] 的月冠军奖励: {status_text}\n\n"
+            result += self.get_task_list(group_id)
+            return result
+
+        except Exception as e:
+            logger.exception(f"[PKTracker] 设置月冠军奖励异常: {str(e)}")
+            return "❌ 设置失败,请稍后重试"
+        finally:
+            conn.close()
