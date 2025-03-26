@@ -1,6 +1,8 @@
 import requests
+
 from common.log import logger
 from config import conf
+
 
 class UserManager:
     def __init__(self, client, app_id):

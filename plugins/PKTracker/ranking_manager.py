@@ -1,6 +1,8 @@
 import sqlite3
 from datetime import datetime
+
 from common.log import logger
+
 
 class RankingManager:
     def __init__(self, db_path, user_manager):
@@ -39,11 +41,11 @@ class RankingManager:
                 JOIN t_task t ON cl.task_id = t.task_id
                 WHERE t.group_id = ? AND cl.user_id = ? AND t.enable = 1
             """, (group_id, user_id))
-            
+
             total_records = c.fetchone()[0]
             page_size = 5  # 修改为每页5条
             total_pages = (total_records + page_size - 1) // page_size
-            
+
             # 确保页码有效
             page = max(1, min(page, total_pages)) if total_pages > 0 else 1
             offset = (page - 1) * page_size
@@ -65,7 +67,7 @@ class RankingManager:
             """, (group_id, user_id, page_size, offset))
 
             records = c.fetchall()
-            
+
             if not records:
                 if page > 1:
                     return f"❌ 第{page}页没有记录"

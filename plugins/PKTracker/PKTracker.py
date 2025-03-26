@@ -33,29 +33,29 @@ class PKTracker(Plugin):
             self.config = super().load_config()
             if not self.config:
                 self.config = self._load_config_template()
-            
+
             # 初始化数据库
             db_name = self.config.get("db_path", "pkTracker.db")  # 从配置文件获取数据库名称，默认为 pkTracker.db
             self.db_path = os.path.join(os.path.dirname(__file__), db_name)
             self.db_manager = DatabaseManager(self.db_path)
-            
+
             # 初始化客户端
             self._init_client()
-            
+
             # 初始化各个管理器
             self.task_manager = TaskManager(self.db_path)
             self.checkin_manager = CheckinManager(self.db_path)
             self.user_manager = UserManager(self.client, self.app_id)
             self.admin_manager = AdminManager(self.db_path, self.config, self.user_manager)
             self.ranking_manager = RankingManager(self.db_path, self.user_manager)
-            
+
             # 初始化并启动调度器
             self.scheduler = TaskScheduler(self.db_path, self)
             self.scheduler.start_scheduler()
-            
+
             # 注册事件处理器
             self.handlers[Event.ON_HANDLE_CONTEXT] = self.on_handle_context
-            
+
             logger.info("[PKTracker] 初始化成功")
         except Exception as e:
             logger.error(f"[PKTracker] 初始化异常：{e}")
@@ -127,7 +127,7 @@ class PKTracker(Plugin):
         context = e_context["context"]
         if context.type != ContextType.TEXT:
             return
-        
+
         content = context.content
         if not content.startswith("PKTracker"):
             return
@@ -152,14 +152,14 @@ class PKTracker(Plugin):
                 e_context["reply"] = reply
                 e_context.action = EventAction.BREAK_PASS
                 return
-                
+
             command = parts[1]
             reply_text = self.handle_command(command, parts, user_id, group_id)
-            
+
             reply = Reply(ReplyType.TEXT, reply_text)
             e_context["reply"] = reply
             e_context.action = EventAction.BREAK_PASS
-            
+
         except Exception as e:
             logger.exception(f"[PKTracker] 处理消息异常: {str(e)}")
             reply = Reply(ReplyType.ERROR, "处理命令时出错,请稍后再试")
@@ -175,7 +175,7 @@ class PKTracker(Plugin):
                 return "请输入打卡内容"
             content = " ".join(parts[2:])
             return self.checkin_manager.handle_checkin(user_id, group_id, task_name, content)
-                
+
         # 处理管理员命令
         elif command == "设置频率":
             if not self.admin_manager.is_admin(group_id, user_id):
@@ -192,15 +192,15 @@ class PKTracker(Plugin):
         # 处理查询命令
         elif command == "积分榜":
             return self.ranking_manager.get_ranking(group_id, parts[2] if len(parts) > 2 else None)
-            
+
         # 处理任务列表命令
         elif command == "任务列表":
             return self.task_manager.get_task_list(group_id)
-            
+
         # 处理查看管理员命令
         elif command == "查看管理员":
             return self.admin_manager.get_admin_list(group_id)
-                
+
         # 处理帮助命令
         elif command == "help":
             return self.get_help_text()
@@ -235,7 +235,7 @@ class PKTracker(Plugin):
                 return "格式错误,请使用: PKTracker 创建任务 [任务名称]"
             task_name = parts[2][1:-1]
             return self.task_manager.create_task(group_id, task_name)
-        
+
         elif command == "设置次数":
             if not self.admin_manager.is_admin(group_id, user_id):
                 return "只有管理员可以设置打卡次数"
@@ -248,18 +248,18 @@ class PKTracker(Plugin):
                 return self.task_manager.set_max_checkins(group_id, task_name, max_checkins)
             except ValueError:
                 return "❌ 次数必须是整数且大于0"
-        
+
         elif command == "任务详情":
             if len(parts) != 3 or not (parts[2].startswith('[') and parts[2].endswith(']')):
                 return "格式错误,请使用: PKTracker 任务详情 [任务名称]"
             task_name = parts[2][1:-1]
             return self.task_manager.get_task_detail(group_id, task_name)
-            
+
         # 处理积分详情命令
         elif command == "积分详情":
             page = 1
             user_name = None
-            
+
             # 解析参数
             for part in parts[2:]:
                 if part.startswith('p[') and part.endswith(']'):
@@ -271,7 +271,7 @@ class PKTracker(Plugin):
                         return "❌ 页码必须是正整数"
                 elif part.startswith('[') and part.endswith(']'):
                     user_name = part[1:-1]
-            
+
             # 根据参数返回相应的积分详情
             if user_name:
                 return self.ranking_manager.get_user_bonus_detail(group_id, user_name=user_name, page=page)
@@ -281,14 +281,14 @@ class PKTracker(Plugin):
         elif command == "设置连续打卡":
             if not self.admin_manager.is_admin(group_id, user_id):
                 return "只有管理员可以设置连续打卡规则"
-            
+
             if len(parts) < 4:
                 return "格式错误,请使用: PKTracker 设置连续打卡 [任务名称] s[开/关] b[分数]"
-            
+
             task_name = parts[2][1:-1]
             enable = None
             bonus = None
-            
+
             # 解析参数
             for part in parts[3:]:
                 if part.startswith('s[') and part.endswith(']'):
@@ -306,26 +306,26 @@ class PKTracker(Plugin):
                             return "❌ 分数必须大于等于0"
                     except ValueError:
                         return "❌ 分数必须是整数"
-            
+
             if enable is None:
                 return "❌ 请设置连续打卡状态：s[开] 或 s[关]"
-            
+
             if enable == 1 and bonus is None:
                 return "❌ 开启连续打卡时必须设置分数"
-                
+
             return self.task_manager.set_continuous_checkin(group_id, task_name, enable, bonus)
         # 处理设置首次打卡命令
         elif command == "设置首次打卡":
             if not self.admin_manager.is_admin(group_id, user_id):
                 return "只有管理员可以设置首次打卡规则"
-            
+
             if len(parts) < 4:
                 return "格式错误,请使用: PKTracker 设置首次打卡 [任务名称] s[开/关] b[分数]"
-            
+
             task_name = parts[2][1:-1]
             enable = None
             bonus = None
-            
+
             # 解析参数
             for part in parts[3:]:
                 if part.startswith('s[') and part.endswith(']'):
@@ -343,26 +343,26 @@ class PKTracker(Plugin):
                             return "❌ 分数必须大于等于0"
                     except ValueError:
                         return "❌ 分数必须是整数"
-            
+
             if enable is None:
                 return "❌ 请设置首次打卡状态：s[开] 或 s[关]"
-            
+
             if enable == 1 and bonus is None:
                 return "❌ 开启首次打卡时必须设置分数"
-                
+
             return self.task_manager.set_first_checkin(group_id, task_name, enable, bonus)
         # 处理设置周冠军命令
         elif command == "设置周冠军":
             if not self.admin_manager.is_admin(group_id, user_id):
                 return "只有管理员可以设置周冠军规则"
-            
+
             if len(parts) < 4:
                 return "格式错误,请使用: PKTracker 设置周冠军 [任务名称] s[开/关] b[分数]"
-            
+
             task_name = parts[2][1:-1]
             enable = None
             bonus = None
-            
+
             # 解析参数
             for part in parts[3:]:
                 if part.startswith('s[') and part.endswith(']'):
@@ -380,27 +380,27 @@ class PKTracker(Plugin):
                             return "❌ 分数必须大于等于0"
                     except ValueError:
                         return "❌ 分数必须是整数"
-            
+
             if enable is None:
                 return "❌ 请设置周冠军状态：s[开] 或 s[关]"
-            
+
             if enable == 1 and bonus is None:
                 return "❌ 开启周冠军时必须设置分数"
-                
+
             return self.task_manager.set_week_checkin(group_id, task_name, enable, bonus)
 
         # 处理设置月冠军命令
         elif command == "设置月冠军":
             if not self.admin_manager.is_admin(group_id, user_id):
                 return "只有管理员可以设置月冠军规则"
-            
+
             if len(parts) < 4:
                 return "格式错误,请使用: PKTracker 设置月冠军 [任务名称] s[开/关] b[分数]"
-            
+
             task_name = parts[2][1:-1]
             enable = None
             bonus = None
-            
+
             # 解析参数
             for part in parts[3:]:
                 if part.startswith('s[') and part.endswith(']'):
@@ -418,26 +418,26 @@ class PKTracker(Plugin):
                             return "❌ 分数必须大于等于0"
                     except ValueError:
                         return "❌ 分数必须是整数"
-            
+
             if enable is None:
                 return "❌ 请设置月冠军状态：s[开] 或 s[关]"
-            
+
             if enable == 1 and bonus is None:
                 return "❌ 开启月冠军时必须设置分数"
-                
+
             return self.task_manager.set_month_checkin(group_id, task_name, enable, bonus)
         # 处理设置任务命令
         elif command == "设置任务":
             if not self.admin_manager.is_admin(group_id, user_id):
                 return "只有管理员可以设置任务"
-            
+
             if len(parts) < 4:
                 return "格式错误,请使用: PKTracker 设置任务 [任务名称] s[开/关] b[分数]"
-            
+
             task_name = parts[2][1:-1]
             enable = None
             score = None
-            
+
             # 解析参数
             for part in parts[3:]:
                 if part.startswith('s[') and part.endswith(']'):
@@ -455,46 +455,46 @@ class PKTracker(Plugin):
                             return "❌ 分数必须大于等于0"
                     except ValueError:
                         return "❌ 分数必须是整数"
-            
+
             if enable is None:
                 return "❌ 请设置任务状态：s[开] 或 s[关]"
-            
+
             if enable == 1 and score is None:
                 return "❌ 开启任务时必须设置基础分数"
-                
+
             return self.task_manager.set_task_base_score(group_id, task_name, enable, score)
         # 处理删除任务命令
         elif command == "删除任务":
             if not self.admin_manager.is_admin(group_id, user_id):
                 return "只有管理员可以删除任务"
-            
+
             if len(parts) != 3 or not (parts[2].startswith('[') and parts[2].endswith(']')):
                 return "格式错误,请使用: PKTracker 删除任务 [任务名称]"
-            
+
             task_name = parts[2][1:-1]
             return self.task_manager.delete_task(group_id, task_name)
-                # 处理设置提醒时间命令
+            # 处理设置提醒时间命令
         elif command == "设置提醒时间":
             if not self.admin_manager.is_admin(group_id, user_id):
                 return "只有管理员可以设置提醒时间"
-            
+
             if len(parts) < 4:
                 return "格式错误,请使用: PKTracker 设置提醒时间 [任务名称] time[提醒时间] t[提醒内容]"
-            
+
             task_name = parts[2][1:-1]
             reminder_time = None
             remind_text = None
-            
+
             # 解析参数
             for part in parts[3:]:
                 if part.startswith('time[') and part.endswith(']'):
                     reminder_time = part[5:-1]
                 elif part.startswith('t[') and part.endswith(']'):
                     remind_text = part[2:-1]
-            
+
             if reminder_time is None:
                 return "❌ 请设置提醒时间：time[HH:MM]"
-                
+
             return self.task_manager.set_reminder(group_id, task_name, reminder_time, remind_text)
         else:
             return "未知命令,请检查输入"

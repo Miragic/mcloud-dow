@@ -1,5 +1,7 @@
 import sqlite3
+
 from common.log import logger
+
 
 class AdminManager:
     def __init__(self, db_path, config, user_manager):

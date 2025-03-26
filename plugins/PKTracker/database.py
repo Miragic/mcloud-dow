@@ -1,5 +1,4 @@
 import sqlite3
-from common.log import logger
 
 class DatabaseManager:
     def __init__(self, db_path):

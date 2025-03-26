@@ -1,6 +1,8 @@
 import sqlite3
-from common.log import logger
 from datetime import datetime
+
+from common.log import logger
+
 
 class TaskManager:
     def __init__(self, db_path):
@@ -45,7 +47,7 @@ class TaskManager:
         try:
             conn = sqlite3.connect(self.db_path)
             c = conn.cursor()
-            
+
             c.execute("""
                 SELECT t.task_name, t.frequency, t.max_checkins,
                        COUNT(cl.checkin_id) as total_checkins,
@@ -60,20 +62,20 @@ class TaskManager:
                 GROUP BY t.task_id
                 ORDER BY t.task_id DESC
             """, (group_id,))
-            
+
             tasks = c.fetchall()
             if not tasks:
                 return "当前群组暂无任务"
-            
+
             message = "📝 任务列表\n==================="
-            
+
             freq_map = {"day": "每日", "week": "每周", "month": "每月"}
-            for (task_name, frequency, max_checkins, total_checkins, 
+            for (task_name, frequency, max_checkins, total_checkins,
                  continuous_enable, continuous_bonus,
                  first_enable, first_bonus,
                  weekly_enable, weekly_bonus,
                  monthly_enable, monthly_bonus,
-                 task_enable, base_score,reminder_time,remind_text) in tasks:
+                 task_enable, base_score, reminder_time, remind_text) in tasks:
                 freq_text = freq_map.get(frequency, frequency)
                 message += f"\n\n{'✅' if task_enable else '❌'} [{task_name}]"
                 message += f" ({('已启用' if task_enable else '已禁用')})"
@@ -90,9 +92,9 @@ class TaskManager:
                 message += f"\n   - 连续打卡: {'开启 (+' + str(continuous_bonus) + '分)' if continuous_enable else '关闭'}"
                 message += f"\n   - 周冠军: {'开启 (+' + str(weekly_bonus) + '分)' if weekly_enable else '关闭'}"
                 message += f"\n   - 月冠军: {'开启 (+' + str(monthly_bonus) + '分)' if monthly_enable else '关闭'}"
-            
+
             return message
-            
+
         except Exception as e:
             logger.exception(f"[PKTracker] 获取任务列表异常: {str(e)}")
             return "❌ 获取任务列表失败"
@@ -156,11 +158,11 @@ class TaskManager:
                         WHERE group_id=? AND task_name=?""",
                       (group_id, task_name))
             frequency, max_checkins = c.fetchone()
-            
+
             freq_map = {'day': '每日', 'week': '每周', 'month': '每月'}
             freq_text = freq_map.get(frequency, frequency)
             checkins_text = f"每{freq_text}最多打卡{max_checkins}次" if max_checkins > 0 else "不限制打卡次数"
-            
+
             return f"""✅ 创建任务成功!
 任务名称: [{task_name}]
 打卡频率: {freq_text}
@@ -178,7 +180,7 @@ class TaskManager:
         try:
             conn = sqlite3.connect(self.db_path)
             c = conn.cursor()
-            
+
             # 获取任务基本信息
             c.execute("""
                 SELECT t.task_id, t.frequency, t.max_checkins,
@@ -195,16 +197,16 @@ class TaskManager:
                 WHERE t.group_id=? AND t.task_name=?
                 GROUP BY t.task_id
             """, (group_id, task_name))
-            
+
             task = c.fetchone()
             if not task:
                 return f"❌ 任务 [{task_name}] 不存在"
-            
+
             (task_id, frequency, max_checkins, total_users, total_checkins, last_checkin,
              first_enable, first_bonus, continuous_enable, continuous_bonus,
              weekly_enable, weekly_bonus, monthly_enable, monthly_bonus,
-             task_enable,base_score,reminder_time,remind_text) = task
-            
+             task_enable, base_score, reminder_time, remind_text) = task
+
             # 获取今日打卡人数
             today = datetime.now().strftime('%Y-%m-%d')
             c.execute("""
@@ -213,7 +215,7 @@ class TaskManager:
                 WHERE task_id=? AND date(checkin_time)=?
             """, (task_id, today))
             today_users = c.fetchone()[0]
-            
+
             # 获取连续打卡人数
             c.execute("""
                 SELECT COUNT(DISTINCT user_id)
@@ -226,10 +228,10 @@ class TaskManager:
                 )
             """, (task_id,))
             consecutive_users = c.fetchone()[0]
-            
+
             freq_map = {"day": "每日", "week": "每周", "month": "每月"}
             freq_text = freq_map.get(frequency, frequency)
-            
+
             message = f"📊 任务详情 [{task_name}]\n"
             message += "===================\n\n"
             message += f"🔸 任务状态: {'已启用 ✅' if task_enable else '已禁用 ❌'}\n\n"
@@ -252,9 +254,9 @@ class TaskManager:
             message += f"   - 连续打卡达标: {consecutive_users}人\n"
             if last_checkin:
                 message += f"   - 最后打卡时间: {last_checkin}\n"
-            
+
             return message
-            
+
         except Exception as e:
             logger.exception(f"[PKTracker] 获取任务详情异常: {str(e)}")
             return "❌ 获取任务详情失败"
@@ -508,7 +510,7 @@ class TaskManager:
                             SELECT task_id FROM t_task 
                             WHERE group_id=? AND task_name=?
                         )""", (group_id, task_name))
-            
+
             c.execute("""DELETE FROM t_task 
                         WHERE group_id=? AND task_name=?""",
                       (group_id, task_name))
