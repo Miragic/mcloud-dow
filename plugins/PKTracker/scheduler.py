@@ -30,12 +30,19 @@ class TaskScheduler:
             id='check_reminders'
         )
         
-        # 每天早上9:10发送排行榜
-        self.scheduler.add_job(
-            self.send_daily_ranking,
-            CronTrigger(hour=9, minute=10),
-            id='daily_ranking'
-        )
+        # 从配置文件获取每日排行榜发送时间
+        daily_ranking_time = RobotConfig.conf().get("PKTracker_daily_ranking_time", None)
+        if daily_ranking_time:
+            try:
+                hour, minute = map(int, daily_ranking_time.split(':'))
+                self.scheduler.add_job(
+                    self.send_daily_ranking,
+                    CronTrigger(hour=hour, minute=minute),
+                    id='daily_ranking'
+                )
+                logger.info(f"[PKTracker] 每日排行榜定时任务已设置: {daily_ranking_time}")
+            except Exception as e:
+                logger.error(f"[PKTracker] 设置每日排行榜定时任务失败: {str(e)}")
         
         # 每周晚上23:00处理周奖励
         self.scheduler.add_job(
@@ -132,9 +139,15 @@ class TaskScheduler:
             context = Context(ContextType.TEXT, message)
             context["isgroup"] = True
             context["group_id"] = group_id
-            context["msg"] = ChatMessage(None)
-            context["msg"].is_group = True
-            context["msg"].other_user_id = group_id
+            context["receiver"] = group_id  # 添加 receiver 属性
+            
+            # 构建完整的消息对象
+            msg = ChatMessage(None)
+            msg.is_group = True
+            msg.other_user_id = group_id
+            msg.to_user_id = group_id
+            msg.actual_user_id = group_id
+            context["msg"] = msg
             
             # 构建回复消息
             reply = Reply(ReplyType.TEXT, message)

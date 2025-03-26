@@ -35,7 +35,8 @@ class PKTracker(Plugin):
                 self.config = self._load_config_template()
             
             # 初始化数据库
-            self.db_path = os.path.join(os.path.dirname(__file__), "pkTracker.db")
+            db_name = self.config.get("db_path", "pkTracker.db")  # 从配置文件获取数据库名称，默认为 pkTracker.db
+            self.db_path = os.path.join(os.path.dirname(__file__), db_name)
             self.db_manager = DatabaseManager(self.db_path)
             
             # 初始化客户端
@@ -508,6 +509,8 @@ class PKTracker(Plugin):
     🔹 查看任务:
       - 查看任务列表:
         PKTracker 任务列表
+      - 查看任务详情:
+        PKTracker 任务详情 [任务名称]
       - 查看指定任务排名:
         PKTracker 积分榜 [任务名称]
       - 查看所有任务排名:
@@ -521,53 +524,52 @@ class PKTracker(Plugin):
         PKTracker 积分详情 [张三] p[2] (查看张三的第2页)
 
     🔹 管理员指令:
-      1. 创建打卡任务:
-         PKTracker 创建任务 [任务名称]
-         例如: PKTracker 创建任务 [每日一练]
-      2. 删除打卡任务:
-         PKTracker 删除任务 [任务名称]
-         例如: PKTracker 删除任务 [每日一练]
-      3. 设置任务:
-         PKTracker 设置任务 [任务名称] s[开/关] b[分数]
-         例如: PKTracker 设置任务 [早起] s[开] b[2]
-      3. 设置打卡频率:
-         PKTracker 设置频率 [任务名称] [日/周/月]
-      3. 设置提醒时间:
-         PKTracker 设置提醒 [任务名称] [时间]
-         时间格式: HH:MM (例如: 08:00)
-      4. 设置连续打卡:
-         PKTracker 设置连续打卡 [任务名称] s[开/关] b[分数]
-         例如: PKTracker 设置连续打卡 [早起] s[开] b[3]
-      5. 设置首次打卡:
-         PKTracker 设置首次打卡 [任务名称] s[开/关] b[分数]
-         例如: PKTracker 设置首次打卡 [早起] s[开] b[3]
-      6. 设置周冠军:
-         PKTracker 设置周冠军 [任务名称] s[开/关] b[分数]
-         例如: PKTracker 设置周冠军 [早起] s[开] b[3]
-      7. 设置月冠军:
-         PKTracker 设置月冠军 [任务名称] s[开/关] b[分数]
-         例如: PKTracker 设置月冠军 [早起] s[开] b[5]
-      8. 查看管理员:
-         PKTracker 查看管理员
+      1. 任务管理:
+         - 创建任务:
+           PKTracker 创建任务 [任务名称]
+         - 删除任务:
+           PKTracker 删除任务 [任务名称]
+         - 设置任务状态和基础分:
+           PKTracker 设置任务 [任务名称] s[开/关] b[分数]
+           例如: PKTracker 设置任务 [早起] s[开] b[2]
+         - 设置打卡次数:
+           PKTracker 设置次数 [任务名称] [次数]
+           例如: PKTracker 设置次数 [早起] [3]
 
-    🔸 超级管理员指令:
-      - 添加管理员:
-        PKTracker 添加管理员 [用户名]
-        例如: PKTracker 添加管理员 [张三]
-      - 取消管理员:
-        PKTracker 取消管理员 [用户名]
-        例如: PKTracker 取消管理员 [张三]
+      2. 提醒设置:
+         - 设置提醒时间:
+           PKTracker 设置提醒时间 [任务名称] time[HH:MM] t[提醒内容]
+           例如: PKTracker 设置提醒时间 [早起] time[07:00] t[该起床打卡啦]
 
-    🔸 积分规则:
-      - 基础打卡: 1分
-      - 首次打卡: +3分
-      - 连续打卡: +3分
-      - 周冠军: +3分
-      - 月冠军: +5分
+      3. 奖励设置:
+         - 设置连续打卡奖励:
+           PKTracker 设置连续打卡 [任务名称] s[开/关] b[分数]
+         - 设置首次打卡奖励:
+           PKTracker 设置首次打卡 [任务名称] s[开/关] b[分数]
+         - 设置周冠军奖励:
+           PKTracker 设置周冠军 [任务名称] s[开/关] b[分数]
+         - 设置月冠军奖励:
+           PKTracker 设置月冠军 [任务名称] s[开/关] b[分数]
+
+      4. 管理员管理:
+         - 查看管理员:
+           PKTracker 查看管理员
+         - 添加管理员(仅超管):
+           PKTracker 添加管理员 [用户名]
+         - 取消管理员(仅超管):
+           PKTracker 取消管理员 [用户名]
+
+    🔸 系统功能:
+      - 每日排行榜: 每天早上9:10自动发送
+      - 周冠军公告: 每周日晚23:00自动结算
+      - 月冠军公告: 每月最后一天23:00自动结算
+      - 定时提醒: 根据设置的提醒时间自动发送
 
     💡 Tips: 
-      - 每个任务每天只能打卡一次
-      - 连续打卡3天可获得额外奖励
-      - 打卡内容要认真填写哦~"""
+      - 每个任务可以设置每日打卡次数限制
+      - 任务可以分别开启/关闭各种奖励机制
+      - 基础分数、连续打卡、首次打卡等奖励分数都可自定义
+      - 打卡内容要认真填写哦~
+      - 管理员可以通过任务详情查看具体设置"""
 
         return base_help
