@@ -12,6 +12,7 @@ from plugins.PKTracker.admin_manager import AdminManager
 from plugins.PKTracker.checkin_manager import CheckinManager
 from plugins.PKTracker.database import DatabaseManager
 from plugins.PKTracker.ranking_manager import RankingManager
+from plugins.PKTracker.scheduler import TaskScheduler
 from plugins.PKTracker.task_manager import TaskManager
 from plugins.PKTracker.user_manager import UserManager
 
@@ -47,6 +48,10 @@ class PKTracker(Plugin):
             self.admin_manager = AdminManager(self.db_path, self.config, self.user_manager)
             self.ranking_manager = RankingManager(self.db_path, self.user_manager)
             
+            # 初始化并启动调度器
+            self.scheduler = TaskScheduler(self.db_path, self)
+            self.scheduler.start_scheduler()
+            
             # 注册事件处理器
             self.handlers[Event.ON_HANDLE_CONTEXT] = self.on_handle_context
             
@@ -54,6 +59,15 @@ class PKTracker(Plugin):
         except Exception as e:
             logger.error(f"[PKTracker] 初始化异常：{e}")
             raise Exception(f"[PKTracker] init failed: {str(e)}")
+
+    def __del__(self):
+        """析构函数，确保调度器正确关闭"""
+        try:
+            if hasattr(self, 'scheduler'):
+                self.scheduler.stop_scheduler()
+                logger.info("[PKTracker] 调度器已停止")
+        except Exception as e:
+            logger.error(f"[PKTracker] 停止调度器异常: {str(e)}")
 
     def _init_client(self):
         """初始化微信客户端"""
